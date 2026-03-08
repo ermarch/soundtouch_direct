@@ -189,17 +189,18 @@ class SoundTouchDevice:
 
     async def select_source(
         self,
-        source: str,
+        source: str = "",
         source_account: str = "",
         item_name: str = "",
         location: str = "",
         container_art: str = "",
     ) -> dict[str, Any] | None:
-        """Select a source."""
+        """Select a source or play a URL."""
         account_attr = f' sourceAccount="{source_account}"' if source_account else ""
 
         if location:
-            # URL-based playback: location and type must be XML attributes on ContentItem
+            # URL-based playback: use TUNEIN source with stationurl type.
+            # The location and type must be XML attributes on ContentItem, not child elements.
             name = item_name or "Stream"
             body = (
                 f'<ContentItem source="TUNEIN"{account_attr}'
@@ -208,7 +209,7 @@ class SoundTouchDevice:
                 f"</ContentItem>"
             )
         else:
-            # Source-only selection (Bluetooth, AUX, etc.)
+            # Source-only selection (Bluetooth, AUX, Spotify, etc.)
             name_elem = f"<itemName>{item_name}</itemName>" if item_name else "<itemName/>"
             art_elem = f"<containerArt>{container_art}</containerArt>" if container_art else ""
             body = (

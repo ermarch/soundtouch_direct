@@ -505,10 +505,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             )
             media_id = sourced.url
 
-        # Resolve relative URLs to absolute using HA's external URL
+        # Resolve relative URLs to absolute — must use an IP-based URL the
+        # speaker can reach, so prefer internal URL and fall back to external
         if media_id.startswith("/"):
-            from homeassistant.helpers.network import get_url
-            media_id = f"{get_url(self.hass)}{media_id}"
+            from homeassistant.helpers.network import get_url, NoURLAvailableError
+            try:
+                base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+            except NoURLAvailableError:
+                try:
+                    base = get_url(self.hass, allow_external=True)
+                except NoURLAvailableError:
+                    _LOGGER.error("Cannot determine HA base URL for TTS playback")
+                    return
+            media_id = f"{base}{media_id}"
 
         if not media_id.startswith(("http://", "https://")):
             _LOGGER.warning(
@@ -516,9 +525,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             )
             return
 
+        _LOGGER.debug("SoundTouch playing URL: %s", media_id)
         item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(
-            source="INTERNET_RADIO",
             location=media_id,
             item_name=item_name,
         )
