@@ -191,18 +191,20 @@ class SoundTouchDevice:
         item_name: str = "",
         location: str = "",
         container_art: str = "",
+        media_type: str = "stationurl",
     ) -> dict[str, Any] | None:
         """Select a source or play a URL."""
         account_attr = f' sourceAccount="{source_account}"' if source_account else ""
 
         if location:
-            # URL-based playback: location and type must be XML *attributes*,
-            # not child elements. TUNEIN with stationurl is the correct source
-            # for arbitrary HTTP audio URLs on SoundTouch devices.
+            # URL-based playback: location and type must be XML *attributes*.
+            # Use the provided source (e.g. LOCAL_INTERNET_RADIO) or fall back
+            # to TUNEIN for plain audio URL playback.
+            src = source if source else "TUNEIN"
             name = item_name or "Stream"
             body = (
-                f'<ContentItem source="TUNEIN"{account_attr}'
-                f' location="{location}" type="stationurl" isPresetable="false">'
+                f'<ContentItem source="{src}"{account_attr}'
+                f' location="{location}" type="{media_type}" isPresetable="false">'
                 f"<itemName>{name}</itemName>"
                 f"</ContentItem>"
             )

@@ -566,18 +566,29 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
             return
 
+        # Build the station JSON URL — LOCAL_INTERNET_RADIO requires a JSON
+        # descriptor that points to the actual audio stream URL.
+        # Force HTTP because SoundTouch firmware rejects HTTPS stream URLs.
         try:
             base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
         except NoURLAvailableError:
             base = get_url(self.hass, allow_external=True)
+        if base.startswith("https://"):
+            base = "http://" + base[8:]
+        base = base.rstrip("/")
 
-        stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
-        _LOGGER.warning("SoundTouch stream proxy URL: %s (source: %s)", stream_url, media_id)
+        station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
+        _LOGGER.warning(
+            "SoundTouch: LOCAL_INTERNET_RADIO station URL: %s (source: %s)",
+            station_url, media_id,
+        )
 
-        item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(
-            location=stream_url,
-            item_name=item_name,
+            source="LOCAL_INTERNET_RADIO",
+            source_account="",
+            location=station_url,
+            item_name="TTS",
+            media_type="stationurl",
         )
         await self.coordinator.async_request_refresh()
 

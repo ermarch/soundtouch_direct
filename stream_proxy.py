@@ -1,15 +1,27 @@
 """HTTP streaming proxy for SoundTouch TTS/audio playback.
 
-The SoundTouch 300 behaves like a radio client — it expects the HTTP connection
-to stay open indefinitely. Closing it immediately after sending audio causes the
-device to stall (yellow LED, no sound). We therefore:
-  1. Pre-fetch the audio into memory before sending the /select command
-  2. Send the audio bytes to the device
-  3. Hold the connection open with silence padding until the device disconnects
+The SoundTouch firmware requires the LOCAL_INTERNET_RADIO source to play
+arbitrary HTTP audio streams. This source expects:
+  1. A JSON descriptor file at a URL passed to /select
+  2. The JSON contains the actual audio stream URL
+
+We serve both from HA's built-in HTTP server:
+  - /api/soundtouch_direct/station/{token}.json  → JSON descriptor
+  - /api/soundtouch_direct/stream/{token}        → audio (persistent stream)
+
+IMPORTANT: The SoundTouch firmware requires plain HTTP, not HTTPS.
+The proxy always serves both endpoints over HTTP.
+
+Audio streaming strategy:
+  The device behaves like a radio client — it expects the HTTP connection to
+  stay open. We pre-fetch the TTS audio into memory, send it, then hold the
+  connection open with silent MP3 padding frames so the device does not cut
+  the stream before it finishes playing.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import aiohttp
@@ -21,15 +33,13 @@ from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
+STATION_PATH = "/api/soundtouch_direct/station/{token}.json"
 STREAM_PATH = "/api/soundtouch_direct/stream/{token}"
 CHUNK_SIZE = 8192
 
-# Silent MP3 frame (1 frame of 128kbps silence) used to pad the stream open
-# so the SoundTouch doesn't close the connection before it's done playing.
-# This is a valid MP3 frame header + silence data.
-_SILENT_MP3_FRAME = bytes([
-    0xFF, 0xFB, 0x90, 0x00,  # MP3 frame header: MPEG1, Layer3, 128kbps, 44100Hz, stereo
-]) + bytes(413)  # 417 bytes total per frame at 128kbps
+# A valid silent MP3 frame (MPEG1, Layer 3, 128kbps, 44100Hz, Joint Stereo).
+# Sent after the real audio to keep the connection alive while the device plays.
+_SILENT_FRAME = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(413)
 
 
 class SoundTouchStreamProxy:
@@ -39,7 +49,7 @@ class SoundTouchStreamProxy:
         self._streams: dict[str, bytes] = {}
 
     async def register(self, token: str, source_url: str) -> bool:
-        """Pre-fetch audio from source_url and store under token."""
+        """Pre-fetch audio from source_url and store under token. Returns success."""
         _LOGGER.warning("SoundTouch proxy: pre-fetching %s", source_url)
         try:
             async with aiohttp.ClientSession() as session:
@@ -53,14 +63,14 @@ class SoundTouchStreamProxy:
                             resp.status, source_url,
                         )
                         return False
-                    audio_bytes = await resp.read()
-                    if not audio_bytes:
+                    data = await resp.read()
+                    if not data:
                         _LOGGER.error("SoundTouch proxy: empty response from %s", source_url)
                         return False
-                    self._streams[token] = audio_bytes
+                    self._streams[token] = data
                     _LOGGER.warning(
                         "SoundTouch proxy: stored %d bytes for token %s",
-                        len(audio_bytes), token,
+                        len(data), token,
                     )
                     return True
         except Exception as err:  # pylint: disable=broad-except
@@ -74,18 +84,58 @@ class SoundTouchStreamProxy:
         self._streams.pop(token, None)
 
 
+class SoundTouchStationView(HomeAssistantView):
+    """Serves the JSON station descriptor that LOCAL_INTERNET_RADIO expects."""
+
+    url = STATION_PATH
+    name = "api:soundtouch_direct:station"
+    requires_auth = False
+
+    def __init__(self, proxy: SoundTouchStreamProxy, ha_base_url: str) -> None:
+        self._proxy = proxy
+        self._ha_base_url = ha_base_url
+
+    async def get(self, request: web.Request, token: str) -> web.Response:
+        if self._proxy.get(token) is None:
+            raise HTTPNotFound()
+
+        # Force HTTP — SoundTouch firmware rejects HTTPS stream URLs
+        base = self._ha_base_url
+        if base.startswith("https://"):
+            base = "http://" + base[8:]
+
+        stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
+        descriptor = {
+            "audio": {
+                "hasPlaylist": False,
+                "isRealtime": True,
+                "streamUrl": stream_url,
+            },
+            "imageUrl": "",
+            "name": "TTS",
+            "streamType": "liveRadio",
+        }
+        _LOGGER.warning(
+            "SoundTouch station JSON served for token %s, stream URL: %s",
+            token, stream_url,
+        )
+        return web.Response(
+            body=json.dumps(descriptor),
+            content_type="application/json",
+        )
+
+
 class SoundTouchStreamView(HomeAssistantView):
-    """Serves pre-fetched audio then holds the connection open with silence."""
+    """Serves pre-fetched audio then holds connection open with silence padding."""
 
     url = STREAM_PATH
     name = "api:soundtouch_direct:stream"
-    requires_auth = False  # SoundTouch cannot send auth headers
+    requires_auth = False
 
     def __init__(self, proxy: SoundTouchStreamProxy) -> None:
         self._proxy = proxy
 
     async def get(self, request: web.Request, token: str) -> web.StreamResponse:
-        """Stream audio to the SoundTouch, then pad with silence to keep connection alive."""
         audio_bytes = self._proxy.get(token)
         if not audio_bytes:
             _LOGGER.warning("SoundTouch stream: unknown token %s", token)
@@ -110,34 +160,20 @@ class SoundTouchStreamView(HomeAssistantView):
         await response.prepare(request)
 
         try:
-            # Prime the decoder with 1 second of silence before real audio.
-            # The SoundTouch needs to lock onto the stream format first.
-            for _ in range(44):  # ~1 second at 44100Hz, 128kbps
-                await response.write(_SILENT_MP3_FRAME)
-            await asyncio.sleep(0)
-
-            # Send the actual audio
+            # Send the real audio
             for i in range(0, len(audio_bytes), CHUNK_SIZE):
                 await response.write(audio_bytes[i:i + CHUNK_SIZE])
                 await asyncio.sleep(0)
 
             _LOGGER.warning("SoundTouch stream: audio sent for token %s, holding open", token)
 
-            # Keep the connection alive with silent MP3 frames.
-            # The SoundTouch needs time to decode and play the buffered audio.
-            # We send ~10 minutes worth of silence then give up.
-            # The device will disconnect naturally when it's done playing.
-            max_silence_seconds = 600
-            silence_interval = 0.5  # send a silent frame every 500ms
-            elapsed = 0.0
-            while elapsed < max_silence_seconds:
-                await asyncio.sleep(silence_interval)
-                await response.write(_SILENT_MP3_FRAME)
-                elapsed += silence_interval
+            # Hold connection open with silence so the device finishes playing.
+            # It will disconnect naturally when done; we give up after 10 minutes.
+            for _ in range(1200):  # 1200 × 0.5s = 600s = 10 minutes
+                await asyncio.sleep(0.5)
+                await response.write(_SILENT_FRAME)
 
-        except asyncio.CancelledError:
-            _LOGGER.warning("SoundTouch stream: cancelled for token %s", token)
-        except ConnectionResetError:
+        except (asyncio.CancelledError, ConnectionResetError):
             _LOGGER.warning("SoundTouch stream: device disconnected for token %s", token)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("SoundTouch stream: error for token %s: %r", token, err)
@@ -148,8 +184,11 @@ class SoundTouchStreamView(HomeAssistantView):
         return response
 
 
-def async_setup_stream_proxy(hass: HomeAssistant) -> SoundTouchStreamProxy:
-    """Register the stream proxy view and return the proxy manager."""
+def async_setup_stream_proxy(
+    hass: HomeAssistant, ha_base_url: str
+) -> SoundTouchStreamProxy:
+    """Register the stream proxy views and return the proxy manager."""
     proxy = SoundTouchStreamProxy()
+    hass.http.register_view(SoundTouchStationView(proxy, ha_base_url))
     hass.http.register_view(SoundTouchStreamView(proxy))
     return proxy

@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import DEFAULT_PORT, DOMAIN
 from .coordinator import SoundTouchCoordinator
@@ -20,11 +21,31 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 STREAM_PROXY_KEY = "stream_proxy"
 
 
+def _get_ha_base_url(hass: HomeAssistant) -> str:
+    """Return the HA base URL, preferring an internal IP-based HTTP URL.
+
+    The SoundTouch firmware rejects HTTPS stream URLs, so we specifically
+    request an internal IP URL and strip any https scheme as a fallback.
+    """
+    try:
+        url = get_url(hass, allow_internal=True, allow_ip=True, prefer_external=False)
+    except NoURLAvailableError:
+        try:
+            url = get_url(hass, allow_external=True)
+        except NoURLAvailableError:
+            url = f"http://{hass.config.api.local_ip}:{hass.config.api.port}"  # type: ignore[union-attr]
+    # Force HTTP — SoundTouch firmware cannot fetch HTTPS streams
+    if url.startswith("https://"):
+        url = "http://" + url[8:]
+    return url.rstrip("/")
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the integration — register the stream proxy HTTP view once."""
     hass.data.setdefault(DOMAIN, {})
     if STREAM_PROXY_KEY not in hass.data[DOMAIN]:
-        proxy = async_setup_stream_proxy(hass)
+        base_url = _get_ha_base_url(hass)
+        proxy = async_setup_stream_proxy(hass, base_url)
         hass.data[DOMAIN][STREAM_PROXY_KEY] = proxy
     return True
 
@@ -35,7 +56,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Ensure stream proxy is registered (in case async_setup wasn't called)
     if STREAM_PROXY_KEY not in hass.data[DOMAIN]:
-        proxy = async_setup_stream_proxy(hass)
+        base_url = _get_ha_base_url(hass)
+        proxy = async_setup_stream_proxy(hass, base_url)
         hass.data[DOMAIN][STREAM_PROXY_KEY] = proxy
 
     host = entry.data[CONF_HOST]
