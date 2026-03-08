@@ -1,6 +1,7 @@
 """Bose SoundTouch Direct - media_player platform."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -561,10 +562,6 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         token = secrets.token_urlsafe(12)
-        success = await proxy.register(token, media_id)
-        if not success:
-            _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
-            return
 
         # Build the station JSON URL — LOCAL_INTERNET_RADIO requires a JSON
         # descriptor that points to the actual audio stream URL.
@@ -578,6 +575,23 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         base = base.rstrip("/")
 
         station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
+
+        # Register a placeholder so the station JSON endpoint returns 200
+        # immediately (the stream endpoint will block until audio is ready).
+        # Then kick off the pre-fetch concurrently with the /select command
+        # so we don't add the download time as upfront latency — the device
+        # takes 2-3 seconds to fetch the JSON and connect to the stream,
+        # which is our window to fetch the audio in the background.
+        proxy.register_placeholder(token)
+
+        async def _prefetch() -> None:
+            success = await proxy.register(token, media_id)
+            if not success:
+                _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
+                proxy.unregister(token)
+
+        asyncio.ensure_future(_prefetch())
+
         _LOGGER.warning(
             "SoundTouch: LOCAL_INTERNET_RADIO station URL: %s (source: %s)",
             station_url, media_id,

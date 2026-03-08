@@ -46,7 +46,15 @@ class SoundTouchStreamProxy:
     """Manages stream tokens mapped to pre-fetched audio bytes."""
 
     def __init__(self) -> None:
-        self._streams: dict[str, bytes] = {}
+        self._streams: dict[str, bytes | None] = {}  # None = placeholder (fetching)
+
+    def register_placeholder(self, token: str) -> None:
+        """Reserve a token slot before the audio is fetched.
+
+        The station JSON endpoint will return 200 immediately.
+        The stream endpoint will block until register() fills in the bytes.
+        """
+        self._streams[token] = None
 
     async def register(self, token: str, source_url: str) -> bool:
         """Pre-fetch audio from source_url and store under token. Returns success."""
@@ -77,7 +85,12 @@ class SoundTouchStreamProxy:
             _LOGGER.error("SoundTouch proxy: pre-fetch failed for %s: %r", source_url, err)
             return False
 
+    def has_token(self, token: str) -> bool:
+        """Return True if the token exists (even as a placeholder)."""
+        return token in self._streams
+
     def get(self, token: str) -> bytes | None:
+        """Return audio bytes, or None if still fetching."""
         return self._streams.get(token)
 
     def unregister(self, token: str) -> None:
@@ -96,7 +109,7 @@ class SoundTouchStationView(HomeAssistantView):
         self._ha_base_url = ha_base_url
 
     async def get(self, request: web.Request, token: str) -> web.Response:
-        if self._proxy.get(token) is None:
+        if not self._proxy.has_token(token):
             raise HTTPNotFound()
 
         # Force HTTP — SoundTouch firmware rejects HTTPS stream URLs
@@ -136,10 +149,22 @@ class SoundTouchStreamView(HomeAssistantView):
         self._proxy = proxy
 
     async def get(self, request: web.Request, token: str) -> web.StreamResponse:
-        audio_bytes = self._proxy.get(token)
-        if not audio_bytes:
+        if not self._proxy.has_token(token):
             _LOGGER.warning("SoundTouch stream: unknown token %s", token)
             raise HTTPNotFound()
+
+        # If pre-fetch is still in progress, wait up to 10s for it to complete
+        audio_bytes = self._proxy.get(token)
+        if audio_bytes is None:
+            _LOGGER.warning("SoundTouch stream: waiting for pre-fetch token %s", token)
+            for _ in range(100):  # 100 × 0.1s = 10s max
+                await asyncio.sleep(0.1)
+                audio_bytes = self._proxy.get(token)
+                if audio_bytes is not None:
+                    break
+            if audio_bytes is None:
+                _LOGGER.error("SoundTouch stream: pre-fetch timed out for token %s", token)
+                raise HTTPNotFound()
 
         _LOGGER.warning(
             "SoundTouch stream: connection received for token %s (%d bytes)",
