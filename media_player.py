@@ -72,6 +72,7 @@ SUPPORT_SOUNDTOUCH = (
     | MediaPlayerEntityFeature.SELECT_SOURCE
     | MediaPlayerEntityFeature.SHUFFLE_SET
     | MediaPlayerEntityFeature.REPEAT_SET
+    | MediaPlayerEntityFeature.PLAY_MEDIA
 )
 
 
@@ -474,6 +475,30 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         if key:
             await self.coordinator.device.press_key(key)
             await self.coordinator.async_request_refresh()
+
+    async def async_play_media(
+        self, media_type: MediaType | str, media_id: str, **kwargs: Any
+    ) -> None:
+        """Play a piece of media (supports TTS URLs and direct URLs)."""
+        if media_type in (MediaType.MUSIC, MediaType.URL, "music", "url"):
+            await self.coordinator.device.select_source(
+                source="INTERNET_RADIO",
+                location=media_id,
+                item_name="TTS" if "tts" in media_id.lower() else "Stream",
+            )
+        elif media_type == MediaType.APP:
+            # Treat as a raw URL playback via HTTP source
+            await self.coordinator.device.select_source(
+                source="INTERNET_RADIO",
+                location=media_id,
+                item_name="Media",
+            )
+        else:
+            _LOGGER.warning(
+                "SoundTouch does not support media_type '%s'", media_type
+            )
+            return
+        await self.coordinator.async_request_refresh()
 
     # -------------------------------------------------------------------------
     # Custom services
