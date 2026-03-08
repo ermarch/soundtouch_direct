@@ -110,6 +110,12 @@ class SoundTouchStreamView(HomeAssistantView):
         await response.prepare(request)
 
         try:
+            # Prime the decoder with 1 second of silence before real audio.
+            # The SoundTouch needs to lock onto the stream format first.
+            for _ in range(44):  # ~1 second at 44100Hz, 128kbps
+                await response.write(_SILENT_MP3_FRAME)
+            await asyncio.sleep(0)
+
             # Send the actual audio
             for i in range(0, len(audio_bytes), CHUNK_SIZE):
                 await response.write(audio_bytes[i:i + CHUNK_SIZE])
