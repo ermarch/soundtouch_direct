@@ -1,9 +1,8 @@
 """HTTP streaming proxy for SoundTouch TTS/audio playback.
 
-The SoundTouch 300 (and similar models) cannot play one-shot MP3 URLs directly.
-It only accepts persistent HTTP audio streams (like internet radio). This module
-registers a HA HTTP view that fetches a source audio URL and re-serves it as a
-chunked, persistent stream that the SoundTouch can tune into like a radio station.
+The SoundTouch 300 cannot play one-shot MP3 URLs — it expects a persistent
+HTTP audio stream. This proxy pre-fetches the source audio into memory, then
+serves it repeatedly as a chunked stream so the device can buffer it reliably.
 """
 from __future__ import annotations
 
@@ -18,61 +17,89 @@ from aiohttp.web_exceptions import HTTPNotFound
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-if TYPE_CHECKING:
-    pass
-
 _LOGGER = logging.getLogger(__name__)
 
 STREAM_PATH = "/api/soundtouch_direct/stream/{token}"
-CHUNK_SIZE = 4096
+CHUNK_SIZE = 8192
 
 
 class SoundTouchStreamProxy:
-    """Manages pending stream tokens → source URLs."""
+    """Manages pending stream tokens → pre-fetched audio bytes."""
 
     def __init__(self) -> None:
-        self._streams: dict[str, str] = {}
+        self._streams: dict[str, bytes] = {}
 
-    def register(self, token: str, source_url: str) -> None:
-        """Register a token mapped to a source URL."""
-        self._streams[token] = source_url
-        _LOGGER.debug("Registered stream token %s -> %s", token, source_url)
+    async def register(self, token: str, source_url: str) -> bool:
+        """Pre-fetch audio from source_url and store under token.
+        
+        Returns True if successful, False if the fetch failed.
+        """
+        _LOGGER.warning(
+            "SoundTouch stream proxy: pre-fetching %s", source_url
+        )
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(source_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        _LOGGER.error(
+                            "SoundTouch stream proxy: source returned HTTP %s for %s",
+                            resp.status, source_url,
+                        )
+                        return False
+                    audio_bytes = await resp.read()
+                    if not audio_bytes:
+                        _LOGGER.error(
+                            "SoundTouch stream proxy: empty response from %s", source_url
+                        )
+                        return False
+                    self._streams[token] = audio_bytes
+                    _LOGGER.warning(
+                        "SoundTouch stream proxy: pre-fetched %d bytes for token %s",
+                        len(audio_bytes), token,
+                    )
+                    return True
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.error(
+                "SoundTouch stream proxy: failed to pre-fetch %s: %r", source_url, err
+            )
+            return False
 
-    def get(self, token: str) -> str | None:
-        """Look up a source URL by token (does NOT consume it — stream may reconnect)."""
+    def get(self, token: str) -> bytes | None:
         return self._streams.get(token)
 
     def unregister(self, token: str) -> None:
-        """Remove a token."""
         self._streams.pop(token, None)
 
 
 class SoundTouchStreamView(HomeAssistantView):
-    """Serves a source audio URL as a persistent chunked stream."""
+    """Serves pre-fetched audio bytes as a persistent stream."""
 
     url = STREAM_PATH
     name = "api:soundtouch_direct:stream"
-    requires_auth = False  # SoundTouch has no way to send auth headers
+    requires_auth = False  # SoundTouch cannot send auth headers
 
     def __init__(self, proxy: SoundTouchStreamProxy) -> None:
         self._proxy = proxy
 
     async def get(self, request: web.Request, token: str) -> web.StreamResponse:
-        """Stream audio from the registered source URL."""
-        source_url = self._proxy.get(token)
-        if not source_url:
-            _LOGGER.warning("SoundTouch stream: unknown token %s", token)
+        """Stream pre-fetched audio to the SoundTouch device."""
+        audio_bytes = self._proxy.get(token)
+        if not audio_bytes:
+            _LOGGER.warning("SoundTouch stream: unknown or expired token %s", token)
             raise HTTPNotFound()
 
-        _LOGGER.warning("SoundTouch stream REQUEST RECEIVED: token=%s source=%s", token, source_url)
+        _LOGGER.warning(
+            "SoundTouch stream REQUEST RECEIVED: token=%s, serving %d bytes",
+            token, len(audio_bytes),
+        )
 
         response = web.StreamResponse(
             status=200,
             headers={
                 "Content-Type": "audio/mpeg",
+                "Content-Length": str(len(audio_bytes)),
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Transfer-Encoding": "chunked",
                 "icy-name": "TTS",
                 "icy-genre": "TTS",
                 "icy-metaint": "0",
@@ -81,30 +108,19 @@ class SoundTouchStreamView(HomeAssistantView):
         await response.prepare(request)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(source_url) as resp:
-                    if resp.status != 200:
-                        _LOGGER.error(
-                            "SoundTouch stream: source URL returned %s for %s",
-                            resp.status,
-                            source_url,
-                        )
-                        return response
+            # Send audio in chunks
+            for i in range(0, len(audio_bytes), CHUNK_SIZE):
+                await response.write(audio_bytes[i:i + CHUNK_SIZE])
+                await asyncio.sleep(0)  # yield to event loop between chunks
 
-                    chunk_count = 0
-                    async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
-                        await response.write(chunk)
-                        chunk_count += 1
-                    _LOGGER.warning("SoundTouch stream COMPLETED: %d chunks sent for token %s", chunk_count, token)
+            _LOGGER.warning("SoundTouch stream COMPLETED for token %s", token)
 
         except asyncio.CancelledError:
             _LOGGER.warning("SoundTouch stream CANCELLED for token %s", token)
         except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("SoundTouch stream error for token %s: %r", token, err)
+            _LOGGER.error("SoundTouch stream ERROR for token %s: %r", token, err)
         finally:
-            # Clean up token after stream ends
             self._proxy.unregister(token)
-            _LOGGER.debug("SoundTouch stream ended for token %s", token)
 
         return response
 

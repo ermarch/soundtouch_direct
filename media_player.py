@@ -541,7 +541,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         token = secrets.token_urlsafe(12)
-        proxy.register(token, media_id)
+        success = await proxy.register(token, media_id)
+        if not success:
+            _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
+            return
 
         try:
             base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
