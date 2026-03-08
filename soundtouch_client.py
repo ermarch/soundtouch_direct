@@ -294,18 +294,18 @@ class SoundTouchDevice:
 
     async def _ws_listen(self) -> None:
         """Listen for WebSocket push notifications from the device."""
-        import websockets  # pylint: disable=import-outside-toplevel
+        from websockets.client import connect as ws_connect  # pylint: disable=import-outside-toplevel
 
         ws_url = f"ws://{self.host}:{WEBSOCKET_PORT}/"
         retry_delay = 5
 
         while True:
             try:
-                async with websockets.connect(
+                async with ws_connect(
                     ws_url,
                     ping_interval=20,
                     ping_timeout=10,
-                    extra_headers={"Sec-WebSocket-Protocol": "gabbo"},
+                    additional_headers={"Sec-WebSocket-Protocol": "gabbo"},
                 ) as ws:
                     _LOGGER.debug("WebSocket connected to %s", self.host)
                     retry_delay = 5  # reset on successful connection
