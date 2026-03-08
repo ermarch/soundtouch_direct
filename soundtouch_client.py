@@ -202,8 +202,8 @@ class SoundTouchDevice:
             # URL-based playback: location and type must be XML attributes on ContentItem
             name = item_name or "Stream"
             body = (
-                f'<ContentItem source="{source}"{account_attr}'
-                f' location="{location}" type="uri" isPresetable="false">' 
+                f'<ContentItem source="TUNEIN"{account_attr}'
+                f' location="{location}" type="stationurl" isPresetable="false">' 
                 f"<itemName>{name}</itemName>"
                 f"</ContentItem>"
             )
