@@ -64,7 +64,7 @@ class SoundTouchStreamView(HomeAssistantView):
             _LOGGER.warning("SoundTouch stream: unknown token %s", token)
             raise HTTPNotFound()
 
-        _LOGGER.debug("SoundTouch stream starting: token=%s url=%s", token, source_url)
+        _LOGGER.warning("SoundTouch stream REQUEST RECEIVED: token=%s source=%s", token, source_url)
 
         response = web.StreamResponse(
             status=200,
@@ -91,11 +91,14 @@ class SoundTouchStreamView(HomeAssistantView):
                         )
                         return response
 
+                    chunk_count = 0
                     async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
                         await response.write(chunk)
+                        chunk_count += 1
+                    _LOGGER.warning("SoundTouch stream COMPLETED: %d chunks sent for token %s", chunk_count, token)
 
         except asyncio.CancelledError:
-            _LOGGER.debug("SoundTouch stream cancelled for token %s", token)
+            _LOGGER.warning("SoundTouch stream CANCELLED for token %s", token)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("SoundTouch stream error for token %s: %r", token, err)
         finally:
