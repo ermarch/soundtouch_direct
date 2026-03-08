@@ -305,7 +305,7 @@ class SoundTouchDevice:
                     ws_url,
                     ping_interval=20,
                     ping_timeout=10,
-                    additional_headers={"Sec-WebSocket-Protocol": "gabbo"},
+                    subprotocols=["gabbo"],
                 ) as ws:
                     _LOGGER.debug("WebSocket connected to %s", self.host)
                     retry_delay = 5  # reset on successful connection

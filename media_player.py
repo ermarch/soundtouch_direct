@@ -149,6 +149,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     _attr_has_entity_name = True
     _attr_name = None
     _attr_supported_features = SUPPORT_SOUNDTOUCH
+    _attr_media_content_type = MediaType.MUSIC
 
     def __init__(self, coordinator: SoundTouchCoordinator, entry: ConfigEntry) -> None:
         """Initialize the media player."""
@@ -479,25 +480,24 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     async def async_play_media(
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
-        """Play a piece of media (supports TTS URLs and direct URLs)."""
-        if media_type in (MediaType.MUSIC, MediaType.URL, "music", "url"):
-            await self.coordinator.device.select_source(
-                source="INTERNET_RADIO",
-                location=media_id,
-                item_name="TTS" if "tts" in media_id.lower() else "Stream",
-            )
-        elif media_type == MediaType.APP:
-            # Treat as a raw URL playback via HTTP source
-            await self.coordinator.device.select_source(
-                source="INTERNET_RADIO",
-                location=media_id,
-                item_name="Media",
-            )
-        else:
+        """Play a piece of media (supports TTS URLs and direct audio URLs)."""
+        _LOGGER.debug("play_media called: type=%s id=%s", media_type, media_id)
+
+        # SoundTouch plays any HTTP(S) audio URL via INTERNET_RADIO source.
+        # Accept all media types — HA TTS sends MediaType.MUSIC, but announce
+        # mode and other callers may send different types.
+        if not media_id.startswith(("http://", "https://")):
             _LOGGER.warning(
-                "SoundTouch does not support media_type '%s'", media_type
+                "SoundTouch can only play HTTP(S) URLs, got: %s", media_id
             )
             return
+
+        item_name = "TTS" if "tts" in media_id.lower() else "Stream"
+        await self.coordinator.device.select_source(
+            source="INTERNET_RADIO",
+            location=media_id,
+            item_name=item_name,
+        )
         await self.coordinator.async_request_refresh()
 
     # -------------------------------------------------------------------------
