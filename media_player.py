@@ -525,7 +525,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             )
             return
 
-        _LOGGER.debug("SoundTouch playing URL: %s", media_id)
+        _LOGGER.warning("SoundTouch playing URL: %s", media_id)
         item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(
             location=media_id,
