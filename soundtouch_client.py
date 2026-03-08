@@ -110,7 +110,11 @@ class SoundTouchDevice:
                     if text:
                         return xmltodict.parse(text)
                     return {}
-                _LOGGER.warning("POST %s returned status %s", endpoint, resp.status)
+                response_text = await resp.text()
+                _LOGGER.warning(
+                    "POST %s returned status %s\nBody sent: %s\nResponse: %s",
+                    endpoint, resp.status, body, response_text
+                )
         except aiohttp.ClientError as err:
             _LOGGER.error("Error connecting to SoundTouch at %s: %s", self.host, err)
         except Exception as err:  # pylint: disable=broad-except
