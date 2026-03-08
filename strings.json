@@ -1,0 +1,110 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your Bose SoundTouch",
+        "description": "Enter the IP address of your Bose SoundTouch device. The device must be on the same network as Home Assistant.",
+        "data": {
+          "host": "IP Address",
+          "port": "Port (default: 8090)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Discovered Bose SoundTouch",
+        "description": "Do you want to add the Bose SoundTouch device **{name}** found at `{host}`?"
+      },
+      "reconfigure": {
+        "title": "Reconfigure Bose SoundTouch",
+        "description": "Update the connection settings for your Bose SoundTouch device.",
+        "data": {
+          "host": "IP Address",
+          "port": "Port (default: 8090)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the device. Please check the IP address and ensure the device is on.",
+      "unknown": "Unexpected error occurred. Please check the logs."
+    },
+    "abort": {
+      "already_configured": "This SoundTouch device is already configured.",
+      "cannot_connect": "Unable to connect to the discovered device."
+    }
+  },
+  "services": {
+    "play_preset": {
+      "name": "Play Preset",
+      "description": "Play a stored preset on the SoundTouch device.",
+      "fields": {
+        "preset_id": {
+          "name": "Preset ID",
+          "description": "The preset number to play (1-6)."
+        }
+      }
+    },
+    "set_bass": {
+      "name": "Set Bass",
+      "description": "Adjust the bass level on the SoundTouch device.",
+      "fields": {
+        "bass_level": {
+          "name": "Bass Level",
+          "description": "The bass level to set (-9 to 9)."
+        }
+      }
+    },
+    "create_zone": {
+      "name": "Create Zone",
+      "description": "Create a multi-room zone with this device as the master.",
+      "fields": {
+        "master": {
+          "name": "Master Device ID",
+          "description": "The device ID of the master speaker."
+        },
+        "slaves": {
+          "name": "Slave Device IDs",
+          "description": "A list of device IDs to add as zone slaves."
+        }
+      }
+    },
+    "add_zone_slave": {
+      "name": "Add Zone Slave",
+      "description": "Add a speaker to the current multi-room zone.",
+      "fields": {
+        "slaves": {
+          "name": "Slave Device IDs",
+          "description": "A list of device IDs to add to the zone."
+        }
+      }
+    },
+    "remove_zone_slave": {
+      "name": "Remove Zone Slave",
+      "description": "Remove a speaker from the current multi-room zone.",
+      "fields": {
+        "slaves": {
+          "name": "Slave Device IDs",
+          "description": "A list of device IDs to remove from the zone."
+        }
+      }
+    },
+    "play_everywhere": {
+      "name": "Play Everywhere",
+      "description": "Set this device as the zone master and add all other SoundTouch devices as slaves."
+    },
+    "thumbs_up": {
+      "name": "Thumbs Up",
+      "description": "Send a 'like' signal for the currently playing track (supported on Pandora, etc.)."
+    },
+    "thumbs_down": {
+      "name": "Thumbs Down",
+      "description": "Send a 'dislike' signal for the currently playing track."
+    },
+    "add_favorite": {
+      "name": "Add to Favorites",
+      "description": "Bookmark the currently playing track."
+    },
+    "remove_favorite": {
+      "name": "Remove from Favorites",
+      "description": "Remove the currently playing track from favorites."
+    }
+  }
+}

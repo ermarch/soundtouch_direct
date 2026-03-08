@@ -1,0 +1,118 @@
+"""Constants for the Bose SoundTouch Direct integration."""
+
+DOMAIN = "soundtouch_direct"
+
+# Default values
+DEFAULT_PORT = 8090
+DEFAULT_NAME = "Bose SoundTouch"
+WEBSOCKET_PORT = 8080
+
+# Configuration keys
+CONF_HOST = "host"
+CONF_PORT = "port"
+
+# Update interval for polling fallback (seconds)
+SCAN_INTERVAL = 10
+
+# SoundTouch API endpoints
+API_INFO = "/info"
+API_NOW_PLAYING = "/now_playing"
+API_VOLUME = "/volume"
+API_PRESETS = "/presets"
+API_SOURCES = "/sources"
+API_KEY = "/key"
+API_SELECT = "/select"
+API_BASS = "/bass"
+API_BASS_CAPABILITIES = "/bassCapabilities"
+API_ZONE = "/getZone"
+API_SET_ZONE = "/setZone"
+API_ADD_ZONE_SLAVE = "/addZoneSlave"
+API_REMOVE_ZONE_SLAVE = "/removeZoneSlave"
+API_RECENT = "/recent"
+API_SPEAKER_ATTRIBUTE = "/speaker_attribute"
+
+# Key values for /key endpoint
+KEY_PLAY = "PLAY"
+KEY_PAUSE = "PAUSE"
+KEY_STOP = "STOP"
+KEY_PREV_TRACK = "PREV_TRACK"
+KEY_NEXT_TRACK = "NEXT_TRACK"
+KEY_THUMBS_UP = "THUMBS_UP"
+KEY_THUMBS_DOWN = "THUMBS_DOWN"
+KEY_BOOKMARK = "BOOKMARK"
+KEY_POWER = "POWER"
+KEY_MUTE = "MUTE"
+KEY_VOLUME_UP = "VOLUME_UP"
+KEY_VOLUME_DOWN = "VOLUME_DOWN"
+KEY_PRESET_1 = "PRESET_1"
+KEY_PRESET_2 = "PRESET_2"
+KEY_PRESET_3 = "PRESET_3"
+KEY_PRESET_4 = "PRESET_4"
+KEY_PRESET_5 = "PRESET_5"
+KEY_PRESET_6 = "PRESET_6"
+KEY_AUX_INPUT = "AUX_INPUT"
+KEY_SHUFFLE_OFF = "SHUFFLE_OFF"
+KEY_SHUFFLE_ON = "SHUFFLE_ON"
+KEY_REPEAT_OFF = "REPEAT_OFF"
+KEY_REPEAT_ONE = "REPEAT_ONE"
+KEY_REPEAT_ALL = "REPEAT_ALL"
+KEY_PLAY_PAUSE = "PLAY_PAUSE"
+KEY_ADD_FAVORITE = "ADD_FAVORITE"
+KEY_REMOVE_FAVORITE = "REMOVE_FAVORITE"
+
+# Key states
+KEY_STATE_PRESS = "press"
+KEY_STATE_RELEASE = "release"
+
+# Play statuses
+PLAY_STATUS_PLAY = "PLAY_STATE"
+PLAY_STATUS_PAUSE = "PAUSE_STATE"
+PLAY_STATUS_STOP = "STOP_STATE"
+PLAY_STATUS_BUFFERING = "BUFFERING_STATE"
+
+# Sources
+SOURCE_STANDBY = "STANDBY"
+SOURCE_AUX = "AUX"
+SOURCE_BLUETOOTH = "BLUETOOTH"
+SOURCE_INTERNET_RADIO = "INTERNET_RADIO"
+SOURCE_PANDORA = "PANDORA"
+SOURCE_SPOTIFY = "SPOTIFY"
+SOURCE_STORED_MUSIC = "STORED_MUSIC"
+SOURCE_AIRPLAY = "AIRPLAY"
+SOURCE_INVALID = "INVALID_SOURCE"
+
+# WebSocket notification types
+WS_UPDATES = "updates"
+WS_NOW_PLAYING_UPDATED = "nowPlayingUpdated"
+WS_NOW_PLAYING_CHANGED = "nowPlayingChanged"
+WS_VOLUME_UPDATED = "volumeUpdated"
+WS_PRESETS_CHANGED = "presetsChanged"
+WS_PRESETS_UPDATED = "presetsUpdated"
+WS_ZONE_UPDATED = "zoneUpdated"
+WS_INFO_UPDATED = "infoUpdated"
+WS_NAME_UPDATED = "nameUpdated"
+WS_ERROR_UPDATED = "errorUpdated"
+WS_GROUP_UPDATED = "groupUpdated"
+WS_CONNECTION_STATE_UPDATED = "connectionStateUpdated"
+WS_BROWSE_UPDATED = "browseUpdated"
+WS_RECENTS_UPDATED = "recentsUpdated"
+WS_LANGUAGE_UPDATED = "languageUpdated"
+WS_USER_ACTIVITY_UPDATED = "userActivityUpdated"
+
+# Services
+SERVICE_PLAY_PRESET = "play_preset"
+SERVICE_SET_BASS = "set_bass"
+SERVICE_CREATE_ZONE = "create_zone"
+SERVICE_ADD_ZONE_SLAVE = "add_zone_slave"
+SERVICE_REMOVE_ZONE_SLAVE = "remove_zone_slave"
+SERVICE_PLAY_EVERYWHERE = "play_everywhere"
+SERVICE_THUMBS_UP = "thumbs_up"
+SERVICE_THUMBS_DOWN = "thumbs_down"
+SERVICE_ADD_FAVORITE = "add_favorite"
+SERVICE_REMOVE_FAVORITE = "remove_favorite"
+
+# Service attribute keys
+ATTR_PRESET_ID = "preset_id"
+ATTR_BASS_LEVEL = "bass_level"
+ATTR_MASTER = "master"
+ATTR_SLAVES = "slaves"

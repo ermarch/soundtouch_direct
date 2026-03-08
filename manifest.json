@@ -1,0 +1,17 @@
+{
+  "domain": "soundtouch_direct",
+  "name": "Bose SoundTouch Direct",
+  "version": "1.0.0",
+  "documentation": "https://github.com/yourusername/ha-soundtouch-direct",
+  "issue_tracker": "https://github.com/yourusername/ha-soundtouch-direct/issues",
+  "dependencies": [],
+  "codeowners": [],
+  "requirements": ["xmltodict==0.13.0", "websockets==12.0"],
+  "config_flow": true,
+  "iot_class": "local_push",
+  "zeroconf": [
+    {
+      "type": "_soundtouch._tcp.local."
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+"""Config flow for Bose SoundTouch Direct integration."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant import config_entries
+from homeassistant.components import zeroconf
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.exceptions import HomeAssistantError
+
+from .const import DEFAULT_NAME, DEFAULT_PORT, DOMAIN
+from .soundtouch_client import SoundTouchDevice
+
+_LOGGER = logging.getLogger(__name__)
+
+STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HOST): str,
+        vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
+    }
+)
+
+
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the user input and connect to the device."""
+    device = SoundTouchDevice(data[CONF_HOST], data.get(CONF_PORT, DEFAULT_PORT))
+    try:
+        info = await device.get_info()
+    finally:
+        await device.close()
+
+    if not info or "info" not in info:
+        raise CannotConnect("Unable to retrieve device info")
+
+    device_info = info["info"]
+    return {
+        "title": device_info.get("name", DEFAULT_NAME),
+        "device_id": device_info.get("@deviceID"),
+        "device_type": device_info.get("type"),
+    }
+
+
+class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Bose SoundTouch Direct."""
+
+    VERSION = 1
+
+    def __init__(self) -> None:
+        """Initialize the flow."""
+        self._discovery_info: dict[str, Any] = {}
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the initial step (manual entry)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                info = await validate_input(self.hass, user_input)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception during setup")
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(info["device_id"])
+                self._abort_if_unique_id_configured(
+                    updates={CONF_HOST: user_input[CONF_HOST]}
+                )
+                return self.async_create_entry(
+                    title=info["title"],
+                    data={
+                        CONF_HOST: user_input[CONF_HOST],
+                        CONF_PORT: user_input.get(CONF_PORT, DEFAULT_PORT),
+                        "device_id": info["device_id"],
+                        "device_type": info["device_type"],
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_zeroconf(
+        self, discovery_info: zeroconf.ZeroconfServiceInfo
+    ) -> FlowResult:
+        """Handle zeroconf discovery."""
+        host = discovery_info.host
+        port = discovery_info.port or DEFAULT_PORT
+
+        self._discovery_info = {CONF_HOST: host, CONF_PORT: port}
+
+        # Check if already configured
+        try:
+            info = await validate_input(self.hass, self._discovery_info)
+        except (CannotConnect, Exception):
+            return self.async_abort(reason="cannot_connect")
+
+        device_id = info.get("device_id")
+        if device_id:
+            await self.async_set_unique_id(device_id)
+            self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+
+        self._discovery_info["title"] = info["title"]
+        self.context["title_placeholders"] = {"name": info["title"], "host": host}
+
+        return await self.async_step_zeroconf_confirm()
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm zeroconf discovery."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._discovery_info["title"],
+                data={
+                    CONF_HOST: self._discovery_info[CONF_HOST],
+                    CONF_PORT: self._discovery_info[CONF_PORT],
+                },
+            )
+
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            description_placeholders={
+                "name": self._discovery_info.get("title", DEFAULT_NAME),
+                "host": self._discovery_info[CONF_HOST],
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reconfiguration (e.g. IP address changed)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                info = await validate_input(self.hass, user_input)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data_updates={
+                        CONF_HOST: user_input[CONF_HOST],
+                        CONF_PORT: user_input.get(CONF_PORT, DEFAULT_PORT),
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+
+class CannotConnect(HomeAssistantError):
+    """Error to indicate we cannot connect."""

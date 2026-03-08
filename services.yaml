@@ -1,0 +1,128 @@
+play_preset:
+  name: Play Preset
+  description: Play a stored preset on a Bose SoundTouch device.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+  fields:
+    preset_id:
+      name: Preset ID
+      description: The preset number to play (1-6).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          step: 1
+          mode: slider
+
+set_bass:
+  name: Set Bass
+  description: Adjust the bass level on a Bose SoundTouch device.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+  fields:
+    bass_level:
+      name: Bass Level
+      description: The bass level to set (-9 to 9).
+      required: true
+      selector:
+        number:
+          min: -9
+          max: 9
+          step: 1
+          mode: slider
+
+create_zone:
+  name: Create Multi-Room Zone
+  description: Create a multi-room zone with this device as the master speaker.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+  fields:
+    master:
+      name: Master Device ID
+      description: The SoundTouch device ID of the master speaker.
+      required: true
+      selector:
+        text:
+    slaves:
+      name: Slave Device IDs
+      description: List of SoundTouch device IDs to add as zone slaves.
+      required: true
+      selector:
+        object:
+
+add_zone_slave:
+  name: Add Zone Slave
+  description: Add a speaker to the current multi-room zone.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+  fields:
+    slaves:
+      name: Slave Device IDs
+      description: List of SoundTouch device IDs to add to the zone.
+      required: true
+      selector:
+        object:
+
+remove_zone_slave:
+  name: Remove Zone Slave
+  description: Remove a speaker from the current multi-room zone.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+  fields:
+    slaves:
+      name: Slave Device IDs
+      description: List of SoundTouch device IDs to remove from the zone.
+      required: true
+      selector:
+        object:
+
+play_everywhere:
+  name: Play Everywhere
+  description: Set this device as zone master and group all other SoundTouch devices.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+
+thumbs_up:
+  name: Thumbs Up
+  description: Send a 'like' for the currently playing track (Pandora, etc.).
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+
+thumbs_down:
+  name: Thumbs Down
+  description: Send a 'dislike' for the currently playing track.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+
+add_favorite:
+  name: Add to Favorites
+  description: Bookmark the currently playing track.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
+
+remove_favorite:
+  name: Remove from Favorites
+  description: Remove the currently playing track from favorites.
+  target:
+    entity:
+      integration: soundtouch_direct
+      domain: media_player
