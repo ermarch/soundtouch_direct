@@ -193,18 +193,28 @@ class SoundTouchDevice:
     ) -> dict[str, Any] | None:
         """Select a source."""
         account_attr = f' sourceAccount="{source_account}"' if source_account else ""
-        name_elem = f"<itemName>{item_name}</itemName>" if item_name else "<itemName/>"
-        location_elem = f"<location>{location}</location>" if location else ""
-        art_elem = f"<containerArt>{container_art}</containerArt>" if container_art else ""
 
-        body = (
-            f"<ContentItem source=\"{source}\"{account_attr}>"
-            f"{name_elem}"
-            f"{location_elem}"
-            f"{art_elem}"
-            f"</ContentItem>"
-        )
+        if location:
+            # URL-based playback: location and type must be XML attributes on ContentItem
+            name = item_name or "Stream"
+            body = (
+                f'<ContentItem source="{source}"{account_attr}'
+                f' location="{location}" type="uri" isPresetable="false">' 
+                f"<itemName>{name}</itemName>"
+                f"</ContentItem>"
+            )
+        else:
+            # Source-only selection (Bluetooth, AUX, etc.)
+            name_elem = f"<itemName>{item_name}</itemName>" if item_name else "<itemName/>"
+            art_elem = f"<containerArt>{container_art}</containerArt>" if container_art else ""
+            body = (
+                f'<ContentItem source="{source}"{account_attr}>' 
+                f"{name_elem}"
+                f"{art_elem}"
+                f"</ContentItem>"
+            )
         return await self._post(API_SELECT, body)
+
 
     async def play_preset(self, preset_id: int) -> None:
         """Play a preset (1-6)."""
