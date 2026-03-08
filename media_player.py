@@ -526,6 +526,17 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         _LOGGER.warning("SoundTouch playing URL: %s", media_id)
+
+        # The SoundTouch needs a URL it can fetch independently over the network.
+        # Verify it looks routable (not localhost/127.0.0.1) so we catch misconfigurations early.
+        if any(bad in media_id for bad in ["localhost", "127.0.0.1", "::1"]):
+            _LOGGER.error(
+                "SoundTouch cannot reach a loopback URL: %s. "
+                "Set a routable internal URL in HA under Settings → System → Network.",
+                media_id,
+            )
+            return
+
         item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(
             location=media_id,
