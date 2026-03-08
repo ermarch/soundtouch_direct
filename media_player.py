@@ -211,7 +211,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         """Return the state of the device."""
         source = self._now_playing.get("@source", "")
         if source == SOURCE_STANDBY or not source:
-            return MediaPlayerState.STANDBY
+            return MediaPlayerState.OFF
 
         play_status = self._now_playing.get("playStatus", "")
         if play_status == PLAY_STATUS_PLAY:
@@ -498,9 +498,18 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         """Play a piece of media (supports TTS URLs and direct audio URLs)."""
         _LOGGER.debug("play_media called: type=%s id=%s", media_type, media_id)
 
-        # SoundTouch plays any HTTP(S) audio URL via INTERNET_RADIO source.
-        # Accept all media types — HA TTS sends MediaType.MUSIC, but announce
-        # mode and other callers may send different types.
+        # Resolve media-source:// URIs (e.g. TTS) into a playable HTTP URL
+        if media_source.is_media_source_id(media_id):
+            sourced = await media_source.async_resolve_media(
+                self.hass, media_id, self.entity_id
+            )
+            media_id = sourced.url
+
+        # Resolve relative URLs to absolute using HA's external URL
+        if media_id.startswith("/"):
+            from homeassistant.helpers.network import get_url
+            media_id = f"{get_url(self.hass)}{media_id}"
+
         if not media_id.startswith(("http://", "https://")):
             _LOGGER.warning(
                 "SoundTouch can only play HTTP(S) URLs, got: %s", media_id
