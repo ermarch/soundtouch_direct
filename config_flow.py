@@ -9,11 +9,11 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import zeroconf
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DEFAULT_NAME, DEFAULT_PORT, DOMAIN
+from .const import CONF_APP_KEY, DEFAULT_NAME, DEFAULT_PORT, DOMAIN
 from .soundtouch_client import SoundTouchDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
+        vol.Optional(CONF_APP_KEY, default=""): str,
     }
 )
 
@@ -54,6 +55,12 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the flow."""
         self._discovery_info: dict[str, Any] = {}
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        """Return the options flow."""
+        return SoundTouchOptionsFlow(config_entry)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -78,6 +85,7 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_HOST: user_input[CONF_HOST],
                         CONF_PORT: user_input.get(CONF_PORT, DEFAULT_PORT),
+                        CONF_APP_KEY: user_input.get(CONF_APP_KEY, ""),
                         "device_id": info["device_id"],
                         "device_type": info["device_type"],
                     },
@@ -86,6 +94,9 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
+            description_placeholders={
+                "app_key_url": "https://developer.bose.com"
+            },
             errors=errors,
         )
 
@@ -98,7 +109,6 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._discovery_info = {CONF_HOST: host, CONF_PORT: port}
 
-        # Check if already configured
         try:
             info = await validate_input(self.hass, self._discovery_info)
         except (CannotConnect, Exception):
@@ -124,6 +134,7 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data={
                     CONF_HOST: self._discovery_info[CONF_HOST],
                     CONF_PORT: self._discovery_info[CONF_PORT],
+                    CONF_APP_KEY: "",
                 },
             )
 
@@ -140,6 +151,7 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle reconfiguration (e.g. IP address changed)."""
         errors: dict[str, str] = {}
+        current = self._get_reconfigure_entry()
 
         if user_input is not None:
             try:
@@ -150,17 +162,57 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(
-                    self._get_reconfigure_entry(),
+                    current,
                     data_updates={
                         CONF_HOST: user_input[CONF_HOST],
                         CONF_PORT: user_input.get(CONF_PORT, DEFAULT_PORT),
+                        CONF_APP_KEY: user_input.get(CONF_APP_KEY, current.data.get(CONF_APP_KEY, "")),
                     },
                 )
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=current.data.get(CONF_HOST, "")): str,
+                    vol.Optional(CONF_PORT, default=current.data.get(CONF_PORT, DEFAULT_PORT)): int,
+                    vol.Optional(CONF_APP_KEY, default=current.data.get(CONF_APP_KEY, "")): str,
+                }
+            ),
             errors=errors,
+        )
+
+
+class SoundTouchOptionsFlow(config_entries.OptionsFlow):
+    """Options flow — lets users add/change the Bose app key without re-adding the device."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage options."""
+        if user_input is not None:
+            # Store in options, but also update config entry data so the
+            # integration picks it up immediately after reload.
+            return self.async_create_entry(title="", data=user_input)
+
+        current_key = self._config_entry.options.get(
+            CONF_APP_KEY,
+            self._config_entry.data.get(CONF_APP_KEY, ""),
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_APP_KEY, default=current_key): str,
+                }
+            ),
+            description_placeholders={
+                "app_key_url": "https://developer.bose.com"
+            },
         )
 
 

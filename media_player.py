@@ -495,17 +495,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     async def async_play_media(
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
-        """Play a piece of media (supports TTS and direct audio URLs).
+        """Play a piece of media (TTS or direct audio URL).
 
-        The SoundTouch 300 cannot fetch one-shot MP3 URLs directly — it only
-        accepts persistent HTTP audio streams. We therefore register the source
-        URL with our stream proxy, which re-serves it as a chunked stream that
-        the device can tune into like a radio station.
+        Strategy:
+        1. If an app_key is configured, use the Bose Notification API
+           (POST /speaker). This works on all SoundTouch devices, auto-restores
+           the previous source, and is the officially supported method.
+        2. Otherwise fall back to the stream proxy (persistent HTTP stream),
+           which works on most devices except possibly the SoundTouch 300.
         """
         import secrets
         from homeassistant.helpers.network import get_url, NoURLAvailableError
         from .__init__ import STREAM_PROXY_KEY
-        from .const import DOMAIN
+        from .const import CONF_APP_KEY, DOMAIN
 
         _LOGGER.debug("play_media called: type=%s id=%s", media_type, media_id)
 
@@ -532,12 +534,30 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             _LOGGER.warning("SoundTouch: unplayable media_id: %s", media_id)
             return
 
-        # Register source URL with the stream proxy and build the stream URL.
-        # The stream proxy re-serves the audio as a persistent chunked stream,
-        # which is the only format the SoundTouch 300 will play from a URL.
+        # Prefer the Bose Notification API when an app_key is available.
+        # Options take precedence over config entry data (allows adding key later).
+        app_key = self.coordinator.config_entry.options.get(
+            CONF_APP_KEY,
+            self.coordinator.config_entry.data.get(CONF_APP_KEY, ""),
+        )
+
+        if app_key:
+            _LOGGER.debug("SoundTouch: using Notification API for %s", media_id)
+            success = await self.coordinator.device.play_notification(
+                app_key=app_key,
+                url=media_id,
+            )
+            if success:
+                await self.coordinator.async_request_refresh()
+                return
+            _LOGGER.warning(
+                "SoundTouch: Notification API failed, falling back to stream proxy"
+            )
+
+        # Fallback: stream proxy — serves the audio as a persistent HTTP stream.
         proxy = self.hass.data.get(DOMAIN, {}).get(STREAM_PROXY_KEY)
         if proxy is None:
-            _LOGGER.error("SoundTouch stream proxy not initialised")
+            _LOGGER.error("SoundTouch stream proxy not initialised and no app_key set")
             return
 
         token = secrets.token_urlsafe(12)
@@ -552,7 +572,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             base = get_url(self.hass, allow_external=True)
 
         stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
-        _LOGGER.warning("SoundTouch stream URL: %s (source: %s)", stream_url, media_id)
+        _LOGGER.warning("SoundTouch stream proxy URL: %s (source: %s)", stream_url, media_id)
 
         item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(

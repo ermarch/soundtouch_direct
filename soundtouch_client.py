@@ -17,6 +17,7 @@ from .const import (
     API_PRESETS,
     API_RECENT,
     API_SELECT,
+    API_SPEAKER,
     API_SOURCES,
     API_VOLUME,
     API_ZONE,
@@ -217,6 +218,39 @@ class SoundTouchDevice:
 
         _LOGGER.warning("Sending to /select: %s", body)
         return await self._post(API_SELECT, body)
+
+    async def play_notification(
+        self,
+        app_key: str,
+        url: str,
+        volume: int = 0,
+        service: str = "HomeAssistant",
+        reason: str = "TTS",
+        message: str = "",
+    ) -> bool:
+        """Play a notification using the Bose Notification API (POST /speaker).
+
+        This is the correct way to play one-shot audio on all SoundTouch
+        devices. Requires a free app_key from developer.bose.com.
+        The device automatically restores the previous source when done.
+
+        volume=0 means 'use current volume'.
+        """
+        vol_tag = f"<volume>{volume}</volume>" if volume > 0 else ""
+        msg_tag = f"<message>{message}</message>" if message else ""
+        body = (
+            f"<play_info>"
+            f"<app_key>{app_key}</app_key>"
+            f"<url>{url}</url>"
+            f"<service>{service}</service>"
+            f"<reason>{reason}</reason>"
+            f"{msg_tag}"
+            f"{vol_tag}"
+            f"</play_info>"
+        )
+        _LOGGER.debug("play_notification POST /speaker: %s", url)
+        result = await self._post(API_SPEAKER, body)
+        return result is not None
 
     async def play_preset(self, preset_id: int) -> None:
         if 1 <= preset_id <= 6:

@@ -3,22 +3,24 @@
     "step": {
       "user": {
         "title": "Connect to your Bose SoundTouch",
-        "description": "Enter the IP address of your Bose SoundTouch device. The device must be on the same network as Home Assistant.",
+        "description": "Enter the IP address of your Bose SoundTouch device.\n\nOptionally enter a Bose app key (free from {app_key_url}) to enable TTS notifications on all SoundTouch devices.",
         "data": {
           "host": "IP Address",
-          "port": "Port (default: 8090)"
+          "port": "Port (default: 8090)",
+          "app_key": "Bose App Key (optional, for TTS)"
         }
       },
       "zeroconf_confirm": {
         "title": "Discovered Bose SoundTouch",
-        "description": "Do you want to add the Bose SoundTouch device **{name}** found at `{host}`?"
+        "description": "Do you want to add the Bose SoundTouch device **{name}** found at `{host}`?\n\nYou can add a Bose app key later via the Configure button to enable TTS notifications."
       },
       "reconfigure": {
         "title": "Reconfigure Bose SoundTouch",
         "description": "Update the connection settings for your Bose SoundTouch device.",
         "data": {
           "host": "IP Address",
-          "port": "Port (default: 8090)"
+          "port": "Port (default: 8090)",
+          "app_key": "Bose App Key (optional, for TTS)"
         }
       }
     },
@@ -29,6 +31,17 @@
     "abort": {
       "already_configured": "This SoundTouch device is already configured.",
       "cannot_connect": "Unable to connect to the discovered device."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SoundTouch Options",
+        "description": "Add a Bose app key (free from {app_key_url}) to enable TTS notifications on all SoundTouch devices including the SoundTouch 300.",
+        "data": {
+          "app_key": "Bose App Key (optional, for TTS)"
+        }
+      }
     }
   },
   "services": {

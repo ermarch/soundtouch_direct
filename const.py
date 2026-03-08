@@ -10,6 +10,7 @@ WEBSOCKET_PORT = 8080
 # Configuration keys
 CONF_HOST = "host"
 CONF_PORT = "port"
+CONF_APP_KEY = "app_key"
 
 # Update interval for polling fallback (seconds)
 SCAN_INTERVAL = 10
@@ -29,6 +30,7 @@ API_SET_ZONE = "/setZone"
 API_ADD_ZONE_SLAVE = "/addZoneSlave"
 API_REMOVE_ZONE_SLAVE = "/removeZoneSlave"
 API_RECENT = "/recent"
+API_SPEAKER = "/speaker"
 API_SPEAKER_ATTRIBUTE = "/speaker_attribute"
 
 # Key values for /key endpoint
