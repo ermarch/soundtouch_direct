@@ -495,20 +495,29 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     async def async_play_media(
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
-        """Play a piece of media (supports TTS URLs and direct audio URLs)."""
+        """Play a piece of media (supports TTS and direct audio URLs).
+
+        The SoundTouch 300 cannot fetch one-shot MP3 URLs directly — it only
+        accepts persistent HTTP audio streams. We therefore register the source
+        URL with our stream proxy, which re-serves it as a chunked stream that
+        the device can tune into like a radio station.
+        """
+        import secrets
+        from homeassistant.helpers.network import get_url, NoURLAvailableError
+        from .__init__ import STREAM_PROXY_KEY
+        from .const import DOMAIN
+
         _LOGGER.debug("play_media called: type=%s id=%s", media_type, media_id)
 
-        # Resolve media-source:// URIs (e.g. TTS) into a playable HTTP URL
+        # Resolve media-source:// URIs (e.g. TTS) into a real HTTP URL
         if media_source.is_media_source_id(media_id):
             sourced = await media_source.async_resolve_media(
                 self.hass, media_id, self.entity_id
             )
             media_id = sourced.url
 
-        # Resolve relative URLs to absolute — must use an IP-based URL the
-        # speaker can reach, so prefer internal URL and fall back to external
+        # Resolve relative paths to absolute internal URLs
         if media_id.startswith("/"):
-            from homeassistant.helpers.network import get_url, NoURLAvailableError
             try:
                 base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
             except NoURLAvailableError:
@@ -520,26 +529,31 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             media_id = f"{base}{media_id}"
 
         if not media_id.startswith(("http://", "https://")):
-            _LOGGER.warning(
-                "SoundTouch can only play HTTP(S) URLs, got: %s", media_id
-            )
+            _LOGGER.warning("SoundTouch: unplayable media_id: %s", media_id)
             return
 
-        _LOGGER.warning("SoundTouch playing URL: %s", media_id)
-
-        # The SoundTouch needs a URL it can fetch independently over the network.
-        # Verify it looks routable (not localhost/127.0.0.1) so we catch misconfigurations early.
-        if any(bad in media_id for bad in ["localhost", "127.0.0.1", "::1"]):
-            _LOGGER.error(
-                "SoundTouch cannot reach a loopback URL: %s. "
-                "Set a routable internal URL in HA under Settings → System → Network.",
-                media_id,
-            )
+        # Register source URL with the stream proxy and build the stream URL.
+        # The stream proxy re-serves the audio as a persistent chunked stream,
+        # which is the only format the SoundTouch 300 will play from a URL.
+        proxy = self.hass.data.get(DOMAIN, {}).get(STREAM_PROXY_KEY)
+        if proxy is None:
+            _LOGGER.error("SoundTouch stream proxy not initialised")
             return
+
+        token = secrets.token_urlsafe(12)
+        proxy.register(token, media_id)
+
+        try:
+            base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+        except NoURLAvailableError:
+            base = get_url(self.hass, allow_external=True)
+
+        stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
+        _LOGGER.warning("SoundTouch stream URL: %s (source: %s)", stream_url, media_id)
 
         item_name = "TTS" if "tts" in media_id.lower() else "Stream"
         await self.coordinator.device.select_source(
-            location=media_id,
+            location=stream_url,
             item_name=item_name,
         )
         await self.coordinator.async_request_refresh()
