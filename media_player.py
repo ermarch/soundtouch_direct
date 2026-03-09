@@ -872,12 +872,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
                 or self._entry.options.get("last_url")
             )
-            _LOGGER.warning("save_preset: unique_id=%s hass_data_keys=%s options=%s real_url=%s",
-                self._attr_unique_id,
-                list(self.hass.data.get(DOMAIN, {}).keys()),
-                dict(self._entry.options),
-                real_url,
-            )
+            # Last resort: fetch our station JSON to extract the real stream URL.
+            if not real_url:
+                station_json_url = content_item.get("@location", "")
+                if station_json_url:
+                    try:
+                        import aiohttp
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(station_json_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    real_url = data.get("audio", {}).get("streamUrl")
+                    except Exception as err:
+                        _LOGGER.warning("save_preset: failed to fetch station JSON: %r", err)
             if not real_url:
                 raise ValueError("Cannot determine original stream URL to save as preset")
             content_item = {
