@@ -881,7 +881,6 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     async def async_save_preset(self, preset_id: int) -> None:
         """Save the currently playing source to a preset slot (1-6)."""
         now_playing = self.coordinator.data.get("now_playing") or {}
-        _LOGGER.warning("save_preset: now_playing=%s", now_playing)
         content_item = now_playing.get("ContentItem")
         if not isinstance(content_item, dict):
             raise ValueError("No content item in now_playing — nothing to save as preset")
