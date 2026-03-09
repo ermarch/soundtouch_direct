@@ -199,9 +199,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = entry.data.get("device_id", entry.entry_id)
-        # Track the last real (non-TTS) ContentItem for snapshot/restore
+        # Track the last real (non-TTS) ContentItem for snapshot/restore.
+        # Stored in hass.data so it survives integration reloads.
         self._last_real_content_item: dict | None = None
-        self._last_real_media_url: str | None = None  # original URL for live streams
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -238,11 +238,16 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         """Update state and track last real (non-TTS) content item."""
         now_playing = self.coordinator.data.get("now_playing") or {}
         source = now_playing.get("@source", "")
+        _LOGGER.warning("coordinator_update: source=%r content_item=%s", source, now_playing.get("ContentItem"))
         # Only remember sources that are real playback, not our TTS injections
         if source and source not in ("STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", ""):
             content_item = now_playing.get("ContentItem")
             if isinstance(content_item, dict) and content_item.get("@source"):
                 self._last_real_content_item = content_item
+                _LOGGER.warning("coordinator_update: stored content_item source=%s location=%s",
+                    content_item.get("@source"), content_item.get("@location"))
+            else:
+                _LOGGER.warning("coordinator_update: source=%r but ContentItem not storable: %s", source, content_item)
         self.async_write_ha_state()
 
     @property
@@ -628,7 +633,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             if direct_url.startswith("https://"):
                 direct_url = "http://" + direct_url[8:]
             proxy.register_direct(token, direct_url)
-            self._last_real_media_url = media_id  # remember for restore after TTS
+            self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id  # remember for restore after TTS
             _LOGGER.warning("SoundTouch: live stream, passing URL directly: %s", direct_url)
 
             station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
@@ -645,7 +650,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # TTS: snapshot current state, play directly, then restore.
         # Use _last_real_media_url if available (live stream we played via play_media),
         # otherwise fall back to _last_real_content_item (preset, Spotify, etc).
-        restore_url = self._last_real_media_url
+        restore_url = self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
         snapshot = self._last_real_content_item if not restore_url else None
         if restore_url:
             _LOGGER.warning("SoundTouch: will restore live stream URL: %s", restore_url)
