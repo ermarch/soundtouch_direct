@@ -668,12 +668,25 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             proxy.register_direct(token, direct_url)
             _LOGGER.debug("SoundTouch: live stream, passing URL directly: %s", direct_url)
 
+            # Use title from kwargs if provided (e.g. Radio Browser passes station name).
+            from homeassistant.components.media_player.const import ATTR_MEDIA_EXTRA
+            _extra = kwargs.get(ATTR_MEDIA_EXTRA) or {}
+            _station_name = (
+                kwargs.get("media_title")
+                or _extra.get("name")
+                or _extra.get("title")
+                or parsed_media.hostname
+                or "Radio"
+            )
+            # Store the station name for later use (e.g. save_preset).
+            self.hass.data.setdefault(DOMAIN, {})[f"last_title_{self._attr_unique_id}"] = _station_name
+
             station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
             await self.coordinator.device.select_source(
                 source="LOCAL_INTERNET_RADIO",
                 source_account="",
                 location=station_url,
-                item_name="Radio",
+                item_name=_station_name,
                 media_type="stationurl",
             )
             await self.coordinator.async_request_refresh()
@@ -901,10 +914,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             else:
                 now_playing = self.coordinator.data.get("now_playing") or {}
                 station_name = (
-                    now_playing.get("stationName")
-                    or self.hass.data.get(DOMAIN, {}).get(f"last_title_{self._attr_unique_id}")
+                    self.hass.data.get(DOMAIN, {}).get(f"last_title_{self._attr_unique_id}")
+                    or now_playing.get("stationName")
                     or (content_item.get("itemName") if isinstance(content_item, dict) else None)
-                    or now_playing.get("ContentItem", {}).get("itemName")
                     or "Radio"
                 )
                 content_item = {
