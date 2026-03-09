@@ -295,7 +295,9 @@ class SoundTouchDevice:
             f"</preset>"
             f"</presets>"
         )
-        await self._post(API_PRESETS, body)
+        _LOGGER.warning("save_preset XML: %s", body)
+        result = await self._post(API_PRESETS, body)
+        _LOGGER.warning("save_preset response: %s", result)
 
     # -------------------------------------------------------------------------
     # Bass

@@ -52,6 +52,7 @@ from .const import (
     SERVICE_PLAY_EVERYWHERE,
     SERVICE_PLAY_PRESET,
     SERVICE_REMOVE_FAVORITE,
+    CONF_DEFAULT_STREAM,
     SERVICE_SAVE_PRESET,
     SERVICE_REMOVE_ZONE_SLAVE,
     SERVICE_SET_BASS,
@@ -99,7 +100,8 @@ async def async_setup_entry(
         "async_play_preset",
     )
     platform.async_register_entity_service(
-        SERVICE_SAVE_PRESET,
+        CONF_DEFAULT_STREAM,
+    SERVICE_SAVE_PRESET,
         {vol.Required(ATTR_PRESET_ID): vol.All(vol.Coerce(int), vol.Range(min=1, max=6))},
         "async_save_preset",
     )
@@ -148,6 +150,7 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_REMOVE_FAVORITE,
+    CONF_DEFAULT_STREAM,
     SERVICE_SAVE_PRESET,
         {},
         "async_remove_favorite",
@@ -682,7 +685,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         _LOGGER.debug("SoundTouch: restore lookup key=last_url_%s domain_keys=%s",
             self._attr_unique_id,
             list(self.hass.data.get(DOMAIN, {}).keys()))
-        restore_url = self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+        restore_url = (
+            self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+            or self._entry.options.get(CONF_DEFAULT_STREAM, "").strip() or None
+        )
         snapshot = self._last_real_content_item if not restore_url else None
         if restore_url:
             _LOGGER.debug("SoundTouch: will restore live stream URL: %s", restore_url)
@@ -886,7 +892,12 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                     except Exception as err:
                         _LOGGER.warning("save_preset: failed to fetch station JSON: %r", err)
             if not real_url:
-                raise ValueError("Cannot determine original stream URL to save as preset")
+                real_url = self._entry.options.get(CONF_DEFAULT_STREAM, "").strip() or None
+            if not real_url:
+                raise ValueError(
+                    "Cannot determine original stream URL. "
+                    "Set a Default Stream URL in the integration options (Configure button)."
+                )
             content_item = {
                 "@source": "INTERNET_RADIO",
                 "@location": real_url,

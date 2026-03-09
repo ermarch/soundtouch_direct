@@ -39,7 +39,11 @@
         "title": "SoundTouch Options",
         "description": "Add a Bose app key (free from {app_key_url}) to enable TTS notifications on all SoundTouch devices including the SoundTouch 300.",
         "data": {
-          "app_key": "Bose App Key (optional, for TTS)"
+          "app_key": "Bose App Key (optional, for TTS)",
+          "default_stream": "Default Stream URL"
+        },
+        "data_description": {
+          "default_stream": "Stream URL to restore after TTS and use when saving presets (e.g. https://stream.example.com/radio)"
         }
       }
     }

@@ -11,6 +11,7 @@ WEBSOCKET_PORT = 8080
 CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_APP_KEY = "app_key"
+CONF_DEFAULT_STREAM = "default_stream"
 
 # Update interval for polling fallback (seconds)
 SCAN_INTERVAL = 10

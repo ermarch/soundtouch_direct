@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CONF_APP_KEY, DEFAULT_NAME, DEFAULT_PORT, DOMAIN
+from .const import CONF_APP_KEY, CONF_DEFAULT_STREAM, DEFAULT_NAME, DEFAULT_PORT, DOMAIN
 from .soundtouch_client import SoundTouchDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -194,20 +194,20 @@ class SoundTouchOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage options."""
         if user_input is not None:
-            # Store in options, but also update config entry data so the
-            # integration picks it up immediately after reload.
             return self.async_create_entry(title="", data=user_input)
 
         current_key = self._config_entry.options.get(
             CONF_APP_KEY,
             self._config_entry.data.get(CONF_APP_KEY, ""),
         )
+        current_stream = self._config_entry.options.get(CONF_DEFAULT_STREAM, "")
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(CONF_APP_KEY, default=current_key): str,
+                    vol.Optional(CONF_DEFAULT_STREAM, default=current_stream): str,
                 }
             ),
             description_placeholders={
