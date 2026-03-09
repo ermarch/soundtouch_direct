@@ -872,6 +872,12 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
                 or self._entry.options.get("last_url")
             )
+            _LOGGER.warning("save_preset: unique_id=%s hass_data_keys=%s options=%s real_url=%s",
+                self._attr_unique_id,
+                list(self.hass.data.get(DOMAIN, {}).keys()),
+                dict(self._entry.options),
+                real_url,
+            )
             if not real_url:
                 raise ValueError("Cannot determine original stream URL to save as preset")
             content_item = {
