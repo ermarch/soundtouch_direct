@@ -625,8 +625,14 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # We do this before the live/TTS split so it works regardless of detection.
         parsed_media = __import__("urllib.parse", fromlist=["urlparse"]).urlparse(media_id)
         HA_LOCAL_PATHS = ("/api/tts_proxy/", "/api/tts/", "/api/soundtouch_direct/")
+        _LOGGER.warning("play_media: ENTER media_id=%s path=%s existing_last_url=%s",
+            media_id, parsed_media.path,
+            self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}"))
         if not any(parsed_media.path.startswith(p) for p in HA_LOCAL_PATHS):
             self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id
+            _LOGGER.warning("play_media: stored last_url=%s", media_id)
+        else:
+            _LOGGER.warning("play_media: skipped storing (HA local path)")
     
         # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
         is_live = await _is_live_stream(media_id, base)
@@ -734,8 +740,33 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             proxy.unregister(token)
 
             if restore_url:
-                _LOGGER.warning("SoundTouch: restoring live stream: %s", restore_url)
-                await self.async_play_media(media_type="music", media_id=restore_url)
+                _LOGGER.warning("SoundTouch: restoring live stream directly: %s", restore_url)
+                # Force HTTP — SoundTouch rejects HTTPS stream URLs.
+                direct_url = restore_url
+                if direct_url.startswith("https://"):
+                    direct_url = "http://" + direct_url[8:]
+                import secrets as _secrets
+                restore_token = _secrets.token_urlsafe(12)
+                proxy.register_direct(restore_token, direct_url)
+                _base = self.hass.data.get(DOMAIN, {}).get("ha_base_url", "")
+                if not _base:
+                    from homeassistant.helpers.network import get_url, NoURLAvailableError
+                    try:
+                        _base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+                    except NoURLAvailableError:
+                        _base = get_url(self.hass, allow_external=True)
+                    if _base.startswith("https://"):
+                        _base = "http://" + _base[8:]
+                    _base = _base.rstrip("/")
+                station_url = f"{_base}/api/soundtouch_direct/station/{restore_token}.json"
+                await self.coordinator.device.select_source(
+                    source="LOCAL_INTERNET_RADIO",
+                    source_account="",
+                    location=station_url,
+                    item_name="Radio",
+                    media_type="stationurl",
+                )
+                await self.coordinator.async_request_refresh()
             elif snapshot:
                 _LOGGER.warning(
                     "SoundTouch: restoring ContentItem source=%s location=%s",
