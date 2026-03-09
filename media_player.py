@@ -621,6 +621,14 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             base = "http://" + base[8:]
         base = base.rstrip("/")
 
+        # Store any external URL as the last played source for restore purposes.
+        # We do this before the live/TTS split so it works regardless of detection.
+        parsed_media = __import__("urllib.parse", fromlist=["urlparse"]).urlparse(media_id)
+        HA_LOCAL_PATHS = ("/api/tts_proxy/", "/api/tts/", "/api/soundtouch_direct/")
+        if not any(parsed_media.path.startswith(p) for p in HA_LOCAL_PATHS):
+            self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id
+            _LOGGER.warning("play_media: stored last_url=%s", media_id)
+
         # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
         _LOGGER.warning("play_media: about to check is_live for %s", media_id)
         is_live = await _is_live_stream(media_id, base)
@@ -633,7 +641,6 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             if direct_url.startswith("https://"):
                 direct_url = "http://" + direct_url[8:]
             proxy.register_direct(token, direct_url)
-            self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id  # remember for restore after TTS
             _LOGGER.warning("SoundTouch: live stream, passing URL directly: %s", direct_url)
 
             station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
