@@ -755,9 +755,22 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                         async with session.get(tts_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                             if resp.status == 200:
                                 data = await resp.read()
-                                duration = len(data) / (128 * 125)
+                                # Detect actual MP3 bitrate from frame header instead of assuming 128kbps.
+                                _BITRATES = {
+                                    0x1: 32, 0x2: 40, 0x3: 48, 0x4: 56, 0x5: 64,
+                                    0x6: 80, 0x7: 96, 0x8: 112, 0x9: 128, 0xA: 160,
+                                    0xB: 192, 0xC: 224, 0xD: 256, 0xE: 320,
+                                }
+                                bitrate = 64  # conservative default
+                                for _i in range(min(len(data) - 3, 8192)):
+                                    if data[_i] == 0xFF and (data[_i + 1] & 0xE0) == 0xE0:
+                                        _br = _BITRATES.get((data[_i + 2] >> 4) & 0xF)
+                                        if _br:
+                                            bitrate = _br
+                                            break
+                                duration = len(data) / (bitrate * 125)
                                 early_wait = duration + 0.5
-                                _LOGGER.warning("SoundTouch: TTS %.1fs, firing restore in %.1fs", duration, early_wait)
+                                _LOGGER.warning("SoundTouch: TTS %.1fs @ %dkbps, firing restore in %.1fs", duration, bitrate, early_wait)
                 except Exception as err:
                     _LOGGER.warning("SoundTouch: TTS size probe failed: %r, using WS only", err)
 
