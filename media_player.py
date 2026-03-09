@@ -100,8 +100,7 @@ async def async_setup_entry(
         "async_play_preset",
     )
     platform.async_register_entity_service(
-        CONF_DEFAULT_STREAM,
-    SERVICE_SAVE_PRESET,
+        SERVICE_SAVE_PRESET,
         {vol.Required(ATTR_PRESET_ID): vol.All(vol.Coerce(int), vol.Range(min=1, max=6))},
         "async_save_preset",
     )
@@ -150,8 +149,6 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_REMOVE_FAVORITE,
-    CONF_DEFAULT_STREAM,
-    SERVICE_SAVE_PRESET,
         {},
         "async_remove_favorite",
     )
