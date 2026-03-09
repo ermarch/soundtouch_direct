@@ -621,9 +621,12 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             await self.coordinator.async_request_refresh()
             return
 
-        # TTS: snapshot current state, play, then restore
+        # TTS: snapshot current state, play directly, then restore.
+        # The device fetches the TTS MP3 directly via the JSON descriptor —
+        # no proxy stream needed. We just use the proxy token mechanism to
+        # serve the station JSON and estimate playback duration for restore.
 
-        # Fetch fresh now_playing directly from device to avoid stale cache.
+        # Fetch fresh now_playing from device to avoid stale cache.
         snapshot = None
         try:
             fresh = await self.coordinator.device.get_now_playing()
@@ -647,19 +650,15 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         else:
             _LOGGER.warning("SoundTouch: source=%r not restorable, skipping snapshot", source)
 
-        # Pre-fetch audio concurrently with /select
-        proxy.register_placeholder(token)
-
-        async def _prefetch() -> None:
-            success = await proxy.register(token, media_id)
-            if not success:
-                _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
-                proxy.unregister(token)
-
-        asyncio.ensure_future(_prefetch())
+        # Point the JSON descriptor directly at the TTS URL (force HTTP).
+        # The device fetches it natively — no proxy stream required.
+        tts_url = media_id
+        if tts_url.startswith("https://"):
+            tts_url = "http://" + tts_url[8:]
+        proxy.register_direct(token, tts_url)
 
         station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
-        _LOGGER.warning("SoundTouch: TTS station URL: %s", station_url)
+        _LOGGER.warning("SoundTouch: TTS station URL: %s -> %s", station_url, tts_url)
 
         await self.coordinator.device.select_source(
             source="LOCAL_INTERNET_RADIO",
@@ -670,51 +669,43 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         )
         await self.coordinator.async_request_refresh()
 
-        # Wait for TTS to finish then restore — done in background so HA
-        # doesn't block waiting for it.
+        # Estimate TTS duration and restore after playback.
         if snapshot:
             asyncio.ensure_future(
-                self._restore_after_tts(proxy, token, snapshot)
+                self._restore_after_tts(tts_url, token, proxy, snapshot)
             )
 
     async def _restore_after_tts(
         self,
-        proxy: Any,
+        tts_url: str,
         token: str,
+        proxy: Any,
         snapshot: dict,
     ) -> None:
-        """Wait for TTS audio to finish playing, then restore the previous source.
+        """Fetch TTS audio size, wait for playback to finish, restore previous source.
 
-        We estimate playback duration from the audio byte length rather than
-        waiting for the device to disconnect (it keeps the connection open as
-        if it were a radio station, so disconnection is not a reliable signal).
-
-        Estimation: bytes / (bitrate_kbps * 125) = seconds
-        We assume 128kbps MP3, add 2s buffer for device latency.
+        We fetch the TTS MP3 to measure its size, then estimate duration as
+        bytes / (128kbps * 125). Add 3s buffer for device connect + buffer time.
         """
-        # Wait until the audio is actually fetched so we know its size
-        for _ in range(100):  # up to 10s
-            await asyncio.sleep(0.1)
-            audio = proxy.get(token)
-            if audio is not None:
-                break
-        else:
-            audio = None
+        import aiohttp
+        wait = 12.0  # safe fallback
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    tts_url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        duration = len(data) / (128 * 125)
+                        wait = duration + 3.0  # 3s for device connect + buffer
+                        _LOGGER.warning(
+                            "SoundTouch: TTS %.1fs audio, restoring in %.1fs",
+                            duration, wait,
+                        )
+        except Exception as err:
+            _LOGGER.warning("SoundTouch: could not fetch TTS for duration estimate: %r", err)
 
-        if audio:
-            bitrate_kbps = 128
-            duration = len(audio) / (bitrate_kbps * 125)
-            wait = duration + 2.0  # add 2s for device buffering/latency
-        else:
-            wait = 10.0  # fallback if we couldn't get the audio
-
-        _LOGGER.warning(
-            "SoundTouch: TTS ~%.1fs audio, waiting %.1fs before restoring",
-            duration if audio else 0, wait,
-        )
         await asyncio.sleep(wait)
-
-        # Clean up the token
         proxy.unregister(token)
 
         _LOGGER.warning(
