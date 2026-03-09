@@ -756,7 +756,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                             if resp.status == 200:
                                 data = await resp.read()
                                 duration = len(data) / (128 * 125)
-                                early_wait = max(0.5, duration - 1.0)
+                                early_wait = duration + 0.5
                                 _LOGGER.warning("SoundTouch: TTS %.1fs, firing restore in %.1fs", duration, early_wait)
                 except Exception as err:
                     _LOGGER.warning("SoundTouch: TTS size probe failed: %r, using WS only", err)
