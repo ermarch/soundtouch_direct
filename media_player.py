@@ -664,30 +664,42 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         token: str,
         snapshot: dict,
     ) -> None:
-        """Wait for TTS stream to finish, then restore the previous source."""
-        # Wait for the stream endpoint to be hit (device connected)
+        """Wait for TTS audio to finish playing, then restore the previous source.
+
+        We estimate playback duration from the audio byte length rather than
+        waiting for the device to disconnect (it keeps the connection open as
+        if it were a radio station, so disconnection is not a reliable signal).
+
+        Estimation: bytes / (bitrate_kbps * 125) = seconds
+        We assume 128kbps MP3, add 2s buffer for device latency.
+        """
+        # Wait until the audio is actually fetched so we know its size
         for _ in range(100):  # up to 10s
             await asyncio.sleep(0.1)
-            if not proxy.has_token(token):
-                break  # already cleaned up (error path)
-            if proxy.get(token) is not None:
-                break  # audio is ready, device likely connecting
-
-        # Wait for the device to finish playing — token is unregistered when
-        # the stream connection closes (device disconnected after playback).
-        for _ in range(1200):  # up to 120s
-            await asyncio.sleep(0.1)
-            if not proxy.has_token(token):
+            audio = proxy.get(token)
+            if audio is not None:
                 break
         else:
-            # Safety: clean up if we somehow timed out
-            proxy.unregister(token)
+            audio = None
 
-        # Small buffer so device fully finishes before we switch source
-        await asyncio.sleep(0.5)
+        if audio:
+            bitrate_kbps = 128
+            duration = len(audio) / (bitrate_kbps * 125)
+            wait = duration + 2.0  # add 2s for device buffering/latency
+        else:
+            wait = 10.0  # fallback if we couldn't get the audio
 
         _LOGGER.warning(
-            "SoundTouch: TTS finished, restoring source=%s location=%s",
+            "SoundTouch: TTS ~%.1fs audio, waiting %.1fs before restoring",
+            duration if audio else 0, wait,
+        )
+        await asyncio.sleep(wait)
+
+        # Clean up the token
+        proxy.unregister(token)
+
+        _LOGGER.warning(
+            "SoundTouch: restoring source=%s location=%s",
             snapshot.get("@source"), snapshot.get("@location"),
         )
         try:
