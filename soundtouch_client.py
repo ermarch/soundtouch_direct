@@ -284,22 +284,20 @@ class SoundTouchDevice:
         if location.startswith("https://"):
             location = "http://" + location[8:]
         account = content_item.get("@sourceAccount", "")
-        item_name = content_item.get("itemName", "") or location.split("/")[2] if location else ""
+        media_type = content_item.get("@type", "")
+        item_name = content_item.get("itemName", "") or (location.split("/")[2] if location else "")
         account_attr = f' sourceAccount="{account}"' if account else ""
         location_attr = f' location="{location}"' if location else ""
-        # Note: do NOT include type= attribute — device rejects it on preset write.
+        type_attr = f' type="{media_type}"' if media_type else ""
+        # Use /storePreset endpoint with <preset> wrapper (no outer <presets> tag).
         body = (
-            f"<presets>"
             f'<preset id="{preset_id}">'
-            f'<ContentItem source="{source}"{location_attr}{account_attr} isPresetable="true">'
+            f'<ContentItem source="{source}"{location_attr}{account_attr}{type_attr} isPresetable="true">'
             f"<itemName>{item_name}</itemName>"
             f"</ContentItem>"
             f"</preset>"
-            f"</presets>"
         )
-        _LOGGER.warning("save_preset XML: %s", body)
-        result = await self._post(API_PRESETS, body)
-        _LOGGER.warning("save_preset response: %s", result)
+        await self._post("/storePreset", body)
 
     # -------------------------------------------------------------------------
     # Bass

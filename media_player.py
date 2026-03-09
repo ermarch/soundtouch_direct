@@ -869,39 +869,41 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         if not isinstance(content_item, dict):
             raise ValueError("No content item in now_playing — nothing to save as preset")
 
-        # LOCAL_INTERNET_RADIO is our proxy — save the original stream URL instead.
+        # LOCAL_INTERNET_RADIO is our proxy — save using the station JSON URL directly.
+        # The device can store and play LOCAL_INTERNET_RADIO presets natively via /storePreset.
         if content_item.get("@source") == "LOCAL_INTERNET_RADIO":
-            real_url = (
-                self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
-                or self._entry.options.get("last_url")
-            )
-            # Last resort: fetch our station JSON to extract the real stream URL.
-            if not real_url:
-                station_json_url = content_item.get("@location", "")
-                if station_json_url:
-                    try:
-                        import aiohttp
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(station_json_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    real_url = data.get("audio", {}).get("streamUrl")
-                    except Exception as err:
-                        _LOGGER.warning("save_preset: failed to fetch station JSON: %r", err)
-            if not real_url:
-                real_url = self._entry.options.get(CONF_DEFAULT_STREAM, "").strip() or None
-            if not real_url:
-                raise ValueError(
-                    "Cannot determine original stream URL. "
-                    "Set a Default Stream URL in the integration options (Configure button)."
+            station_json_url = content_item.get("@location", "")
+            if not station_json_url:
+                # Fall back to default stream if no station JSON URL
+                real_url = (
+                    self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+                    or self._entry.options.get("last_url")
+                    or self._entry.options.get(CONF_DEFAULT_STREAM, "").strip()
                 )
-            content_item = {
-                "@source": "INTERNET_RADIO",
-                "@location": real_url,
-                "@type": "stationurl",
-                "@isPresetable": "true",
-                "itemName": real_url.split("/")[2],  # use hostname as name
-            }
+                if not real_url:
+                    raise ValueError(
+                        "Cannot determine stream URL. "
+                        "Set a Default Stream URL in the integration options (Configure button)."
+                    )
+                now_playing = self.coordinator.data.get("now_playing") or {}
+                station_name = now_playing.get("stationName") or real_url.split("/")[2]
+                content_item = {
+                    "@source": "LOCAL_INTERNET_RADIO",
+                    "@location": station_json_url,
+                    "@type": "stationurl",
+                    "@isPresetable": "true",
+                    "itemName": station_name,
+                }
+            else:
+                now_playing = self.coordinator.data.get("now_playing") or {}
+                station_name = now_playing.get("stationName") or "Radio"
+                content_item = {
+                    "@source": "LOCAL_INTERNET_RADIO",
+                    "@location": station_json_url,
+                    "@type": "stationurl",
+                    "@isPresetable": "true",
+                    "itemName": station_name,
+                }
         elif content_item.get("@isPresetable") == "false":
             raise ValueError(f"Current source ({content_item.get('@source')}) cannot be saved as a preset")
 
