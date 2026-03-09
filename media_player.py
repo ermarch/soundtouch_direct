@@ -685,50 +685,52 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         )
         await self.coordinator.async_request_refresh()
 
-        # Estimate TTS duration and restore after playback.
+        # Watch for TTS completion via WebSocket then restore previous source.
         if restore_url or snapshot:
             self._restore_task = self.hass.async_create_task(
-                self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot),
+                self._restore_after_tts(token, proxy, restore_url, snapshot),
                 name="soundtouch_restore",
             )
 
     async def _restore_after_tts(
         self,
-        tts_url: str,
         token: str,
         proxy: Any,
         restore_url: str | None,
         snapshot: dict | None,
     ) -> None:
-        """Wait for TTS to finish then restore the previous source.
+        """Wait for TTS to finish (via WS event) then restore the previous source.
 
-        Duration is estimated from the TTS MP3 size: bytes / (128kbps * 125).
-        3s is added for device connect + buffer time.
+        Waits for the device to report STANDBY/INVALID_SOURCE after playing the
+        LOCAL_INTERNET_RADIO TTS station, with a 15s hard timeout as fallback.
         Restore strategy:
           - restore_url set: re-invoke play_media with the original live stream URL
           - snapshot set: use restore_content_item to replay the ContentItem directly
         """
         _LOGGER.warning("SoundTouch: _restore_after_tts started, restore_url=%s", restore_url)
-        import aiohttp
         try:
-            wait = 8.0  # safe fallback
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        tts_url, timeout=aiohttp.ClientTimeout(total=10)
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            duration = len(data) / (128 * 125)
-                            wait = duration + 1.5
-                            _LOGGER.warning(
-                                "SoundTouch: TTS %.1fs, restoring in %.1fs", duration, wait,
-                            )
-            except Exception as err:
-                _LOGGER.warning("SoundTouch: duration estimate failed: %r, using %.1fs", err, wait)
+            done = asyncio.Event()
 
-            _LOGGER.warning("SoundTouch: sleeping %.1fs before restore", wait)
-            await asyncio.sleep(wait)
+            def _on_update() -> None:
+                """Fired by coordinator on every nowPlaying WS push."""
+                now = self.coordinator.data or {}
+                np = now.get("now_playing", {})
+                source = np.get("@source", "")
+                if source in ("STANDBY", "INVALID_SOURCE", ""):
+                    _LOGGER.warning("SoundTouch: TTS ended (source=%r), triggering restore", source)
+                    done.set()
+
+            # Register listener on the coordinator's update signal.
+            remove_listener = self.coordinator.async_add_listener(_on_update)
+            try:
+                await asyncio.wait_for(done.wait(), timeout=15.0)
+            except asyncio.TimeoutError:
+                _LOGGER.warning("SoundTouch: TTS restore timeout, forcing restore now")
+            finally:
+                remove_listener()
+
+            # Small pause so the device settles before we send /select.
+            await asyncio.sleep(0.7)
             proxy.unregister(token)
 
             if restore_url:
