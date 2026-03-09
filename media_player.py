@@ -732,13 +732,17 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         try:
             done = asyncio.Event()
 
+            import time as _time
+            _tts_start = _time.monotonic()
+
             def _on_update() -> None:
                 """Fired by coordinator on every nowPlaying WS push."""
                 now = self.coordinator.data or {}
                 np = now.get("now_playing", {})
                 source = np.get("@source", "")
                 if source in ("STANDBY", "INVALID_SOURCE", ""):
-                    _LOGGER.warning("SoundTouch: TTS ended (source=%r), triggering restore", source)
+                    _LOGGER.warning("SoundTouch: TTS ended (source=%r) after %.1fs, triggering restore",
+                        source, _time.monotonic() - _tts_start)
                     done.set()
 
             # Register listener on the coordinator's update signal.
@@ -746,13 +750,14 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             try:
                 await asyncio.wait_for(done.wait(), timeout=15.0)
             except asyncio.TimeoutError:
-                _LOGGER.warning("SoundTouch: TTS restore timeout, forcing restore now")
+                _LOGGER.warning("SoundTouch: TTS restore timeout after %.1fs", _time.monotonic() - _tts_start)
             finally:
                 remove_listener()
 
             # Small pause so the device settles before we send /select.
             await asyncio.sleep(0.7)
             proxy.unregister(token)
+            _LOGGER.warning("SoundTouch: sending restore /select at %.1fs", _time.monotonic() - _tts_start)
 
             if restore_url:
                 _LOGGER.warning("SoundTouch: restoring live stream directly: %s", restore_url)
