@@ -234,21 +234,22 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     # -------------------------------------------------------------------------
 
     @callback
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Update state and track last real (non-TTS) content item."""
         now_playing = self.coordinator.data.get("now_playing") or {}
         source = now_playing.get("@source", "")
-        _LOGGER.warning("coordinator_update: source=%r content_item=%s", source, now_playing.get("ContentItem"))
-        # Only remember sources that are real playback, not our TTS injections
         if source and source not in ("STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", ""):
             content_item = now_playing.get("ContentItem")
             if isinstance(content_item, dict) and content_item.get("@source"):
                 self._last_real_content_item = content_item
-                _LOGGER.warning("coordinator_update: stored content_item source=%s location=%s",
-                    content_item.get("@source"), content_item.get("@location"))
-            else:
-                _LOGGER.warning("coordinator_update: source=%r but ContentItem not storable: %s", source, content_item)
+            # Cancel any pending restore if the user manually changed source
+            if self._restore_task and not self._restore_task.done():
+                _LOGGER.debug("SoundTouch: manual source change, cancelling pending restore")
+                self._restore_task.cancel()
+                self._restore_task = None
         self.async_write_ha_state()
+
 
     @property
     def _now_playing(self) -> dict:
@@ -565,7 +566,6 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         from .__init__ import STREAM_PROXY_KEY
         from .const import CONF_APP_KEY, DOMAIN
 
-        _LOGGER.warning("play_media ENTER: type=%s id=%s", media_type, media_id)
 
         # Resolve media-source:// URIs (e.g. TTS) into a real HTTP URL
         if media_source.is_media_source_id(media_id):
@@ -627,12 +627,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         HA_LOCAL_PATHS = ("/api/tts_proxy/", "/api/tts/", "/api/soundtouch_direct/")
         if not any(parsed_media.path.startswith(p) for p in HA_LOCAL_PATHS):
             self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id
-            _LOGGER.warning("play_media: stored last_url=%s", media_id)
-
+    
         # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
-        _LOGGER.warning("play_media: about to check is_live for %s", media_id)
         is_live = await _is_live_stream(media_id, base)
-        _LOGGER.warning("play_media: is_live=%s for %s", is_live, media_id)
 
         token = secrets.token_urlsafe(12)
 
@@ -689,9 +686,8 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await self.coordinator.async_request_refresh()
 
         # Estimate TTS duration and restore after playback.
-        _LOGGER.warning("play_media: before task creation, restore_url=%s snapshot=%s", restore_url, snapshot is not None)
         if restore_url or snapshot:
-            self.hass.async_create_task(
+            self._restore_task = self.hass.async_create_task(
                 self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot),
                 name="soundtouch_restore",
             )
@@ -715,7 +711,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         _LOGGER.warning("SoundTouch: _restore_after_tts started, restore_url=%s", restore_url)
         import aiohttp
         try:
-            wait = 12.0  # safe fallback
+            wait = 8.0  # safe fallback
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
@@ -724,7 +720,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                         if resp.status == 200:
                             data = await resp.read()
                             duration = len(data) / (128 * 125)
-                            wait = duration + 3.0
+                            wait = duration + 1.5
                             _LOGGER.warning(
                                 "SoundTouch: TTS %.1fs, restoring in %.1fs", duration, wait,
                             )
