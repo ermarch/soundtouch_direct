@@ -150,20 +150,22 @@ async def async_setup_entry(
 async def _is_live_stream(url: str, ha_base_url: str = "") -> bool:
     """Return True if the URL is a live/infinite stream (e.g. internet radio).
 
-    Local HA URLs (TTS proxy etc.) are always treated as finite even if they
-    lack a Content-Length header, because they are generated audio files.
-    External URLs are probed: icy-* headers or audio/* without Content-Length
-    indicate a live stream.
-    Falls back to False (treat as finite) on probe failure.
+    HA TTS/proxy paths are always finite. External audio without Content-Length
+    or with icy-* headers is a live stream.
     """
     import aiohttp
     from urllib.parse import urlparse
 
-    # Anything served by HA itself is a finite audio file (TTS, media source)
+    # HA TTS and media proxy paths are always finite audio files
+    parsed = urlparse(url)
+    HA_LOCAL_PATHS = ("/api/tts_proxy/", "/api/tts/", "/api/soundtouch_direct/")
+    if any(parsed.path.startswith(p) for p in HA_LOCAL_PATHS):
+        return False
+
+    # Also match by host if we know HA's base URL
     if ha_base_url:
         ha_host = urlparse(ha_base_url).netloc
-        url_host = urlparse(url).netloc
-        if ha_host and url_host == ha_host:
+        if ha_host and parsed.netloc == ha_host:
             return False
 
     try:
@@ -181,6 +183,7 @@ async def _is_live_stream(url: str, ha_base_url: str = "") -> bool:
                 return False
     except Exception:  # pylint: disable=broad-except
         return False
+
 
 
 class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlayerEntity):
