@@ -144,7 +144,7 @@ class SoundTouchStationView(HomeAssistantView):
             "name": name,
             "streamType": "liveRadio",
         }
-        _LOGGER.warning(
+        _LOGGER.debug(
             "SoundTouch station JSON served for token %s, stream URL: %s",
             token, stream_url,
         )
