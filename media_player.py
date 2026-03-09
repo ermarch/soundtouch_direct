@@ -203,6 +203,14 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # Stored in hass.data so it survives integration reloads.
         self._last_real_content_item: dict | None = None
 
+    async def async_added_to_hass(self) -> None:
+        """Restore last stream URL from config entry options on startup."""
+        await super().async_added_to_hass()
+        stored_url = self._entry.options.get("last_url")
+        if stored_url:
+            self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = stored_url
+            _LOGGER.debug("SoundTouch: loaded last_url from config entry: %s", stored_url)
+
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
@@ -631,6 +639,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         if not any(parsed_media.path.startswith(p) for p in HA_LOCAL_PATHS):
             self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id
             _LOGGER.warning("play_media: stored last_url=%s", media_id)
+            # Persist to config entry so it survives HA restarts.
+            self.hass.config_entries.async_update_entry(
+                self._entry, options={**self._entry.options, "last_url": media_id}
+            )
         else:
             _LOGGER.warning("play_media: skipped storing (HA local path)")
     
