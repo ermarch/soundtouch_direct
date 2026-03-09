@@ -198,6 +198,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         self._attr_unique_id = entry.data.get("device_id", entry.entry_id)
         # Track the last real (non-TTS) ContentItem for snapshot/restore
         self._last_real_content_item: dict | None = None
+        self._last_real_media_url: str | None = None  # original URL for live streams
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -622,6 +623,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             if direct_url.startswith("https://"):
                 direct_url = "http://" + direct_url[8:]
             proxy.register_direct(token, direct_url)
+            self._last_real_media_url = media_id  # remember for restore after TTS
             _LOGGER.warning("SoundTouch: live stream, passing URL directly: %s", direct_url)
 
             station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
@@ -636,16 +638,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         # TTS: snapshot current state, play directly, then restore.
-        # Use _last_real_content_item which is updated on every coordinator
-        # refresh and never set to LOCAL_INTERNET_RADIO (our TTS source).
-        snapshot = self._last_real_content_item
-        if snapshot:
+        # Use _last_real_media_url if available (live stream we played via play_media),
+        # otherwise fall back to _last_real_content_item (preset, Spotify, etc).
+        restore_url = self._last_real_media_url
+        snapshot = self._last_real_content_item if not restore_url else None
+        if restore_url:
+            _LOGGER.warning("SoundTouch: will restore live stream URL: %s", restore_url)
+        elif snapshot:
             _LOGGER.warning(
-                "SoundTouch: snapshot from memory source=%s location=%s",
+                "SoundTouch: will restore ContentItem source=%s location=%s",
                 snapshot.get("@source"), snapshot.get("@location"),
             )
         else:
-            _LOGGER.warning("SoundTouch: no previous real source in memory, skipping restore")
+            _LOGGER.warning("SoundTouch: no previous source to restore")
 
         # Point the JSON descriptor directly at the TTS URL (force HTTP).
         # The device fetches it natively — no proxy stream required.
@@ -667,9 +672,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await self.coordinator.async_request_refresh()
 
         # Estimate TTS duration and restore after playback.
-        if snapshot:
+        if restore_url or snapshot:
             asyncio.ensure_future(
-                self._restore_after_tts(tts_url, token, proxy, snapshot)
+                self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot)
             )
 
     async def _restore_after_tts(
@@ -677,12 +682,16 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         tts_url: str,
         token: str,
         proxy: Any,
-        snapshot: dict,
+        restore_url: str | None,
+        snapshot: dict | None,
     ) -> None:
-        """Fetch TTS audio size, wait for playback to finish, restore previous source.
+        """Wait for TTS to finish then restore the previous source.
 
-        We fetch the TTS MP3 to measure its size, then estimate duration as
-        bytes / (128kbps * 125). Add 3s buffer for device connect + buffer time.
+        Duration is estimated from the TTS MP3 size: bytes / (128kbps * 125).
+        3s is added for device connect + buffer time.
+        Restore strategy:
+          - restore_url set: re-invoke play_media with the original live stream URL
+          - snapshot set: use restore_content_item to replay the ContentItem directly
         """
         import aiohttp
         wait = 12.0  # safe fallback
@@ -694,10 +703,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                     if resp.status == 200:
                         data = await resp.read()
                         duration = len(data) / (128 * 125)
-                        wait = duration + 3.0  # 3s for device connect + buffer
+                        wait = duration + 3.0
                         _LOGGER.warning(
-                            "SoundTouch: TTS %.1fs audio, restoring in %.1fs",
-                            duration, wait,
+                            "SoundTouch: TTS %.1fs, restoring in %.1fs", duration, wait,
                         )
         except Exception as err:
             _LOGGER.warning("SoundTouch: could not fetch TTS for duration estimate: %r", err)
@@ -705,13 +713,20 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await asyncio.sleep(wait)
         proxy.unregister(token)
 
-        _LOGGER.warning(
-            "SoundTouch: restoring source=%s location=%s",
-            snapshot.get("@source"), snapshot.get("@location"),
-        )
         try:
-            await self.coordinator.device.restore_content_item(snapshot)
-            await self.coordinator.async_request_refresh()
+            if restore_url:
+                _LOGGER.warning("SoundTouch: restoring live stream: %s", restore_url)
+                await self.async_play_media(
+                    media_type="music",
+                    media_id=restore_url,
+                )
+            elif snapshot:
+                _LOGGER.warning(
+                    "SoundTouch: restoring ContentItem source=%s location=%s",
+                    snapshot.get("@source"), snapshot.get("@location"),
+                )
+                await self.coordinator.device.restore_content_item(snapshot)
+                await self.coordinator.async_request_refresh()
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("SoundTouch: failed to restore previous source: %r", err)
 
