@@ -147,17 +147,25 @@ async def async_setup_entry(
     )
 
 
-async def _is_live_stream(url: str) -> bool:
+async def _is_live_stream(url: str, ha_base_url: str = "") -> bool:
     """Return True if the URL is a live/infinite stream (e.g. internet radio).
 
-    We probe the headers with a short timeout. A live stream will have:
-    - No Content-Length header, OR
-    - An icy-* header (Icecast/Shoutcast), OR
-    - Content-Type of audio/* without a finite length
-
-    Falls back to False (treat as finite) if the probe fails.
+    Local HA URLs (TTS proxy etc.) are always treated as finite even if they
+    lack a Content-Length header, because they are generated audio files.
+    External URLs are probed: icy-* headers or audio/* without Content-Length
+    indicate a live stream.
+    Falls back to False (treat as finite) on probe failure.
     """
     import aiohttp
+    from urllib.parse import urlparse
+
+    # Anything served by HA itself is a finite audio file (TTS, media source)
+    if ha_base_url:
+        ha_host = urlparse(ha_base_url).netloc
+        url_host = urlparse(url).netloc
+        if ha_host and url_host == ha_host:
+            return False
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -591,7 +599,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         base = base.rstrip("/")
 
         # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
-        is_live = await _is_live_stream(media_id)
+        is_live = await _is_live_stream(media_id, base)
 
         token = secrets.token_urlsafe(12)
 
