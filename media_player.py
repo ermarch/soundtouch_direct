@@ -196,6 +196,8 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = entry.data.get("device_id", entry.entry_id)
+        # Track the last real (non-TTS) ContentItem for snapshot/restore
+        self._last_real_content_item: dict | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -226,6 +228,18 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     # -------------------------------------------------------------------------
     # State properties
     # -------------------------------------------------------------------------
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Update state and track last real (non-TTS) content item."""
+        now_playing = self.coordinator.data.get("now_playing") or {}
+        source = now_playing.get("@source", "")
+        # Only remember sources that are real playback, not our TTS injections
+        if source and source not in ("STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", ""):
+            content_item = now_playing.get("ContentItem")
+            if isinstance(content_item, dict) and content_item.get("@source"):
+                self._last_real_content_item = content_item
+        self.async_write_ha_state()
 
     @property
     def _now_playing(self) -> dict:
@@ -622,33 +636,16 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         # TTS: snapshot current state, play directly, then restore.
-        # The device fetches the TTS MP3 directly via the JSON descriptor —
-        # no proxy stream needed. We just use the proxy token mechanism to
-        # serve the station JSON and estimate playback duration for restore.
-
-        # Fetch fresh now_playing from device to avoid stale cache.
-        snapshot = None
-        try:
-            fresh = await self.coordinator.device.get_now_playing()
-            now_playing = (fresh or {}).get("nowPlaying") or {}
-        except Exception:
-            now_playing = self._now_playing
-        _LOGGER.warning("SoundTouch: now_playing for snapshot: %s", now_playing)
-
-        source = now_playing.get("@source", "")
-        if source and source not in ("STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", ""):
-            content_item = now_playing.get("ContentItem")
-            _LOGGER.warning("SoundTouch: ContentItem for snapshot: %s", content_item)
-            if isinstance(content_item, dict) and content_item.get("@source"):
-                snapshot = content_item
-                _LOGGER.warning(
-                    "SoundTouch: snapshot captured source=%s location=%s",
-                    snapshot.get("@source"), snapshot.get("@location"),
-                )
-            else:
-                _LOGGER.warning("SoundTouch: no restorable ContentItem, skipping restore")
+        # Use _last_real_content_item which is updated on every coordinator
+        # refresh and never set to LOCAL_INTERNET_RADIO (our TTS source).
+        snapshot = self._last_real_content_item
+        if snapshot:
+            _LOGGER.warning(
+                "SoundTouch: snapshot from memory source=%s location=%s",
+                snapshot.get("@source"), snapshot.get("@location"),
+            )
         else:
-            _LOGGER.warning("SoundTouch: source=%r not restorable, skipping snapshot", source)
+            _LOGGER.warning("SoundTouch: no previous real source in memory, skipping restore")
 
         # Point the JSON descriptor directly at the TTS URL (force HTTP).
         # The device fetches it natively — no proxy stream required.
