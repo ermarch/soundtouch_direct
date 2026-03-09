@@ -71,6 +71,7 @@ class SoundTouchPresetButton(CoordinatorEntity, ButtonEntity):
     def available(self) -> bool:
         """Only available if this preset slot is actually configured."""
         presets = self.coordinator.data.get("presets") or {}
+        _LOGGER.warning("preset %s data: %s", self._preset_id, presets)
         preset_list = presets.get("preset", [])
         if isinstance(preset_list, dict):
             preset_list = [preset_list]
