@@ -280,16 +280,18 @@ class SoundTouchDevice:
             raise ValueError(f"preset_id must be 1-6, got {preset_id}")
         source = content_item.get("@source", "")
         location = content_item.get("@location", "")
+        # SoundTouch firmware rejects HTTPS URLs.
+        if location.startswith("https://"):
+            location = "http://" + location[8:]
         account = content_item.get("@sourceAccount", "")
-        media_type = content_item.get("@type", "")
-        item_name = content_item.get("itemName", "")
+        item_name = content_item.get("itemName", "") or location.split("/")[2] if location else ""
         account_attr = f' sourceAccount="{account}"' if account else ""
-        type_attr = f' type="{media_type}"' if media_type else ""
         location_attr = f' location="{location}"' if location else ""
+        # Note: do NOT include type= attribute — device rejects it on preset write.
         body = (
             f"<presets>"
             f'<preset id="{preset_id}">'
-            f'<ContentItem source="{source}"{location_attr}{account_attr}{type_attr} isPresetable="true">'
+            f'<ContentItem source="{source}"{location_attr}{account_attr} isPresetable="true">'
             f"<itemName>{item_name}</itemName>"
             f"</ContentItem>"
             f"</preset>"
