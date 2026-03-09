@@ -218,7 +218,7 @@ class SoundTouchDevice:
                 f"</ContentItem>"
             )
 
-        _LOGGER.warning("Sending to /select: %s", body)
+        _LOGGER.debug("Sending to /select: %s", body)
         return await self._post(API_SELECT, body)
 
     async def play_notification(

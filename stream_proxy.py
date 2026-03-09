@@ -67,7 +67,7 @@ class SoundTouchStreamProxy:
 
     async def register(self, token: str, source_url: str) -> bool:
         """Pre-fetch audio from source_url and store under token. Returns success."""
-        _LOGGER.warning("SoundTouch proxy: pre-fetching %s", source_url)
+        _LOGGER.debug("SoundTouch proxy: pre-fetching %s", source_url)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -172,7 +172,7 @@ class SoundTouchStreamView(HomeAssistantView):
         # If pre-fetch is still in progress, wait up to 10s for it to complete
         audio_bytes = self._proxy.get(token)
         if audio_bytes is None:
-            _LOGGER.warning("SoundTouch stream: waiting for pre-fetch token %s", token)
+            _LOGGER.debug("SoundTouch stream: waiting for pre-fetch token %s", token)
             for _ in range(100):  # 100 × 0.1s = 10s max
                 await asyncio.sleep(0.1)
                 audio_bytes = self._proxy.get(token)
@@ -206,7 +206,7 @@ class SoundTouchStreamView(HomeAssistantView):
                 await response.write(audio_bytes[i:i + CHUNK_SIZE])
                 await asyncio.sleep(0)
 
-            _LOGGER.warning("SoundTouch stream: audio sent for token %s, holding open", token)
+            _LOGGER.debug("SoundTouch stream: audio sent for token %s, holding open", token)
 
             # Hold connection open with silence so the device finishes playing.
             # It will disconnect naturally when done; we give up after 10 minutes.
@@ -215,12 +215,12 @@ class SoundTouchStreamView(HomeAssistantView):
                 await response.write(_SILENT_FRAME)
 
         except (asyncio.CancelledError, ConnectionResetError):
-            _LOGGER.warning("SoundTouch stream: device disconnected for token %s", token)
+            _LOGGER.debug("SoundTouch stream: device disconnected for token %s", token)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.error("SoundTouch stream: error for token %s: %r", token, err)
         finally:
             self._proxy.unregister(token)
-            _LOGGER.warning("SoundTouch stream: closed for token %s", token)
+            _LOGGER.debug("SoundTouch stream: closed for token %s", token)
 
         return response
 
