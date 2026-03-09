@@ -744,27 +744,25 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                     _LOGGER.warning("SoundTouch: WS STANDBY after %.1fs", _time.monotonic() - _tts_start)
                     done.set()
 
-            # Also watch for device actually starting TTS playback (to sync duration clock).
-            playing_event = asyncio.Event()
-            playback_started_at: list[float] = []  # mutable container for closure
+            # Only trigger restore on STANDBY after TTS has been playing for a while.
+            # INVALID_SOURCE fires briefly during startup — ignore it until tts_playing is set.
+            tts_playing = False
 
             def _on_update() -> None:
-                """Fired by coordinator on every nowPlaying WS push."""
+                nonlocal tts_playing
                 now = self.coordinator.data or {}
                 np = now.get("now_playing", {})
                 source = np.get("@source", "")
-                _LOGGER.warning("SoundTouch: WS update source=%r playing=%s", source, playing_event.is_set())
-                if source == "LOCAL_INTERNET_RADIO" and not playing_event.is_set():
-                    playback_started_at.append(_time.monotonic())
-                    _LOGGER.warning("SoundTouch: TTS playback started at %.1fs", _time.monotonic() - _tts_start)
-                    playing_event.set()
-                if source in ("STANDBY", "INVALID_SOURCE", ""):
+                if source == "LOCAL_INTERNET_RADIO":
+                    tts_playing = True
+                if tts_playing and source in ("STANDBY", "INVALID_SOURCE", ""):
                     _LOGGER.warning("SoundTouch: WS STANDBY after %.1fs", _time.monotonic() - _tts_start)
                     done.set()
 
             remove_listener = self.coordinator.async_add_listener(_on_update)
 
-            # Pre-fetch TTS MP3 to measure duration while waiting for playback to start.
+            # Pre-fetch TTS MP3 and use duration as primary timer.
+            # WS STANDBY is fallback in case timer fires too early.
             early_wait = None
             if tts_url:
                 try:
@@ -785,25 +783,16 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                                             bitrate = _br
                                             break
                                 duration = len(data) / (bitrate * 125)
-                                _LOGGER.warning("SoundTouch: TTS %.1fs @ %dkbps", duration, bitrate)
-                                # Wait for playback to actually start, then sleep for duration + buffer.
-                                try:
-                                    await asyncio.wait_for(playing_event.wait(), timeout=8.0)
-                                    started = playback_started_at[0] if playback_started_at else _time.monotonic()
-                                    elapsed = _time.monotonic() - started
-                                    remaining = max(0.3, duration - elapsed + 0.5)
-                                    _LOGGER.warning("SoundTouch: playback started, sleeping %.1fs more", remaining)
-                                    early_wait = remaining
-                                except asyncio.TimeoutError:
-                                    _LOGGER.warning("SoundTouch: playback start timeout, using fixed wait")
-                                    early_wait = duration + 2.0
+                                # Add 2s for device fetch+buffer startup latency, 0.5s end buffer.
+                                early_wait = duration + 2.5
+                                _LOGGER.warning("SoundTouch: TTS %.1fs @ %dkbps, restore in %.1fs", duration, bitrate, early_wait)
                 except Exception as err:
                     _LOGGER.warning("SoundTouch: TTS size probe failed: %r, using WS only", err)
 
             try:
                 if early_wait is not None:
                     await asyncio.wait_for(done.wait(), timeout=early_wait)
-                    _LOGGER.warning("SoundTouch: WS beat timer, restoring now")
+                    _LOGGER.warning("SoundTouch: WS beat timer at %.1fs", _time.monotonic() - _tts_start)
                 else:
                     await asyncio.wait_for(done.wait(), timeout=15.0)
             except asyncio.TimeoutError:
