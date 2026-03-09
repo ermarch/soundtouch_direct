@@ -274,6 +274,29 @@ class SoundTouchDevice:
         if 1 <= preset_id <= 6:
             await self.press_key(f"PRESET_{preset_id}")
 
+    async def save_preset(self, preset_id: int, content_item: dict) -> None:
+        """Save a ContentItem to a preset slot (1-6)."""
+        if not 1 <= preset_id <= 6:
+            raise ValueError(f"preset_id must be 1-6, got {preset_id}")
+        source = content_item.get("@source", "")
+        location = content_item.get("@location", "")
+        account = content_item.get("@sourceAccount", "")
+        media_type = content_item.get("@type", "")
+        item_name = content_item.get("itemName", "")
+        account_attr = f' sourceAccount="{account}"' if account else ""
+        type_attr = f' type="{media_type}"' if media_type else ""
+        location_attr = f' location="{location}"' if location else ""
+        body = (
+            f"<presets>"
+            f'<preset id="{preset_id}">'
+            f'<ContentItem source="{source}"{location_attr}{account_attr}{type_attr} isPresetable="true">'
+            f"<itemName>{item_name}</itemName>"
+            f"</ContentItem>"
+            f"</preset>"
+            f"</presets>"
+        )
+        await self._post(API_PRESETS, body)
+
     # -------------------------------------------------------------------------
     # Bass
     # -------------------------------------------------------------------------

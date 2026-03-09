@@ -52,6 +52,7 @@ from .const import (
     SERVICE_PLAY_EVERYWHERE,
     SERVICE_PLAY_PRESET,
     SERVICE_REMOVE_FAVORITE,
+    SERVICE_SAVE_PRESET,
     SERVICE_REMOVE_ZONE_SLAVE,
     SERVICE_SET_BASS,
     SERVICE_THUMBS_DOWN,
@@ -98,6 +99,11 @@ async def async_setup_entry(
         "async_play_preset",
     )
     platform.async_register_entity_service(
+        SERVICE_SAVE_PRESET,
+        {vol.Required(ATTR_PRESET_ID): vol.All(vol.Coerce(int), vol.Range(min=1, max=6))},
+        "async_save_preset",
+    )
+    platform.async_register_entity_service(
         SERVICE_SET_BASS,
         {vol.Required(ATTR_BASS_LEVEL): vol.All(vol.Coerce(int), vol.Range(min=-9, max=9))},
         "async_set_bass",
@@ -142,6 +148,7 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_REMOVE_FAVORITE,
+    SERVICE_SAVE_PRESET,
         {},
         "async_remove_favorite",
     )
@@ -850,6 +857,17 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     async def async_play_preset(self, preset_id: int) -> None:
         """Play a stored preset (1-6)."""
         await self.coordinator.device.play_preset(preset_id)
+        await self.coordinator.async_request_refresh()
+
+    async def async_save_preset(self, preset_id: int) -> None:
+        """Save the currently playing source to a preset slot (1-6)."""
+        now_playing = self.coordinator.data.get("now_playing") or {}
+        content_item = now_playing.get("ContentItem")
+        if not isinstance(content_item, dict):
+            raise ValueError("No content item in now_playing — nothing to save as preset")
+        if content_item.get("@isPresetable") == "false":
+            raise ValueError(f"Current source ({content_item.get('@source')}) cannot be saved as a preset")
+        await self.coordinator.device.save_preset(preset_id, content_item)
         await self.coordinator.async_request_refresh()
 
     async def async_set_bass(self, bass_level: int) -> None:

@@ -112,6 +112,7 @@ SERVICE_THUMBS_UP = "thumbs_up"
 SERVICE_THUMBS_DOWN = "thumbs_down"
 SERVICE_ADD_FAVORITE = "add_favorite"
 SERVICE_REMOVE_FAVORITE = "remove_favorite"
+SERVICE_SAVE_PRESET = "save_preset"
 
 # Service attribute keys
 ATTR_PRESET_ID = "preset_id"
