@@ -868,7 +868,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
 
         # LOCAL_INTERNET_RADIO is our proxy — save the original stream URL instead.
         if content_item.get("@source") == "LOCAL_INTERNET_RADIO":
-            real_url = self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+            real_url = (
+                self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+                or self._entry.options.get("last_url")
+            )
             if not real_url:
                 raise ValueError("Cannot determine original stream URL to save as preset")
             content_item = {
