@@ -526,12 +526,8 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
     ) -> None:
         """Play a piece of media (TTS or direct audio URL).
 
-        Strategy:
-        1. If an app_key is configured, use the Bose Notification API
-           (POST /speaker). This works on all SoundTouch devices, auto-restores
-           the previous source, and is the officially supported method.
-        2. Otherwise fall back to the stream proxy (persistent HTTP stream),
-           which works on most devices except possibly the SoundTouch 300.
+        For finite audio (TTS): snapshot current state, play, restore when done.
+        For live streams: pass URL directly, no snapshot needed.
         """
         import secrets
         from homeassistant.helpers.network import get_url, NoURLAvailableError
@@ -564,12 +560,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             return
 
         # Prefer the Bose Notification API when an app_key is available.
-        # Options take precedence over config entry data (allows adding key later).
         app_key = self.coordinator.config_entry.options.get(
             CONF_APP_KEY,
             self.coordinator.config_entry.data.get(CONF_APP_KEY, ""),
         )
-
         if app_key:
             _LOGGER.debug("SoundTouch: using Notification API for %s", media_id)
             success = await self.coordinator.device.play_notification(
@@ -579,11 +573,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             if success:
                 await self.coordinator.async_request_refresh()
                 return
-            _LOGGER.warning(
-                "SoundTouch: Notification API failed, falling back to stream proxy"
-            )
+            _LOGGER.warning("SoundTouch: Notification API failed, falling back to stream proxy")
 
-        # Fallback: stream proxy — serves the audio as a persistent HTTP stream.
+        # --- Stream proxy fallback ---
         proxy = self.hass.data.get(DOMAIN, {}).get(STREAM_PROXY_KEY)
         if proxy is None:
             _LOGGER.error("SoundTouch stream proxy not initialised and no app_key set")
@@ -598,38 +590,57 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             base = "http://" + base[8:]
         base = base.rstrip("/")
 
-        token = secrets.token_urlsafe(12)
-
-        # Detect live/infinite streams by probing headers.
-        # Live radio has no Content-Length and must be passed directly —
-        # we cannot pre-fetch an infinite stream.
+        # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
         is_live = await _is_live_stream(media_id)
 
+        token = secrets.token_urlsafe(12)
+
         if is_live:
-            # Pass the URL directly in the JSON descriptor (downgrade to HTTP).
             direct_url = media_id
             if direct_url.startswith("https://"):
                 direct_url = "http://" + direct_url[8:]
             proxy.register_direct(token, direct_url)
             _LOGGER.warning("SoundTouch: live stream, passing URL directly: %s", direct_url)
-        else:
-            # Pre-fetch finite audio (TTS) concurrently with sending /select
-            # so the device gets the audio immediately when it connects (~2s later).
-            proxy.register_placeholder(token)
 
-            async def _prefetch() -> None:
-                success = await proxy.register(token, media_id)
-                if not success:
-                    _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
-                    proxy.unregister(token)
+            station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
+            await self.coordinator.device.select_source(
+                source="LOCAL_INTERNET_RADIO",
+                source_account="",
+                location=station_url,
+                item_name="Radio",
+                media_type="stationurl",
+            )
+            await self.coordinator.async_request_refresh()
+            return
 
-            asyncio.ensure_future(_prefetch())
+        # --- TTS / finite audio: snapshot → play → restore ---
+
+        # Snapshot current state before interrupting
+        snapshot = None
+        now_playing = self._now_playing
+        source = now_playing.get("@source", "")
+        if source and source not in ("STANDBY", "INVALID_SOURCE", ""):
+            content_item = now_playing.get("ContentItem")
+            if isinstance(content_item, dict) and content_item.get("@source"):
+                snapshot = content_item
+                _LOGGER.warning(
+                    "SoundTouch: snapshot source=%s location=%s",
+                    snapshot.get("@source"), snapshot.get("@location"),
+                )
+
+        # Pre-fetch audio concurrently with /select
+        proxy.register_placeholder(token)
+
+        async def _prefetch() -> None:
+            success = await proxy.register(token, media_id)
+            if not success:
+                _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
+                proxy.unregister(token)
+
+        asyncio.ensure_future(_prefetch())
 
         station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
-        _LOGGER.warning(
-            "SoundTouch: LOCAL_INTERNET_RADIO station URL: %s (source: %s)",
-            station_url, media_id,
-        )
+        _LOGGER.warning("SoundTouch: TTS station URL: %s", station_url)
 
         await self.coordinator.device.select_source(
             source="LOCAL_INTERNET_RADIO",
@@ -639,6 +650,51 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             media_type="stationurl",
         )
         await self.coordinator.async_request_refresh()
+
+        # Wait for TTS to finish then restore — done in background so HA
+        # doesn't block waiting for it.
+        if snapshot:
+            asyncio.ensure_future(
+                self._restore_after_tts(proxy, token, snapshot)
+            )
+
+    async def _restore_after_tts(
+        self,
+        proxy: Any,
+        token: str,
+        snapshot: dict,
+    ) -> None:
+        """Wait for TTS stream to finish, then restore the previous source."""
+        # Wait for the stream endpoint to be hit (device connected)
+        for _ in range(100):  # up to 10s
+            await asyncio.sleep(0.1)
+            if not proxy.has_token(token):
+                break  # already cleaned up (error path)
+            if proxy.get(token) is not None:
+                break  # audio is ready, device likely connecting
+
+        # Wait for the device to finish playing — token is unregistered when
+        # the stream connection closes (device disconnected after playback).
+        for _ in range(1200):  # up to 120s
+            await asyncio.sleep(0.1)
+            if not proxy.has_token(token):
+                break
+        else:
+            # Safety: clean up if we somehow timed out
+            proxy.unregister(token)
+
+        # Small buffer so device fully finishes before we switch source
+        await asyncio.sleep(0.5)
+
+        _LOGGER.warning(
+            "SoundTouch: TTS finished, restoring source=%s location=%s",
+            snapshot.get("@source"), snapshot.get("@location"),
+        )
+        try:
+            await self.coordinator.device.restore_content_item(snapshot)
+            await self.coordinator.async_request_refresh()
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.error("SoundTouch: failed to restore previous source: %r", err)
 
     # -------------------------------------------------------------------------
     # Custom services

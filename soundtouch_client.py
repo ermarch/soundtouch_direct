@@ -254,6 +254,22 @@ class SoundTouchDevice:
         result = await self._post(API_SPEAKER, body)
         return result is not None
 
+    async def restore_content_item(self, content_item: dict) -> None:
+        """Restore a previously snapshotted ContentItem to /select."""
+        source = content_item.get("@source", "")
+        source_account = content_item.get("@sourceAccount", "")
+        location = content_item.get("@location", "")
+        item_name = content_item.get("itemName", "")
+        media_type = content_item.get("@type", "")
+
+        await self.select_source(
+            source=source,
+            source_account=source_account,
+            location=location,
+            item_name=item_name,
+            media_type=media_type or "stationurl",
+        )
+
     async def play_preset(self, preset_id: int) -> None:
         if 1 <= preset_id <= 6:
             await self.press_key(f"PRESET_{preset_id}")
