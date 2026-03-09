@@ -698,12 +698,18 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         _LOGGER.debug("SoundTouch: restore lookup key=last_url_%s domain_keys=%s",
             self._attr_unique_id,
             list(self.hass.data.get(DOMAIN, {}).keys()))
+        # Check if device was in STANDBY before TTS — restore to standby afterwards.
+        _pre_tts_source = (self.coordinator.data.get("now_playing") or {}).get("@source", "")
+        _was_standby = _pre_tts_source in ("STANDBY", "INVALID_SOURCE", "")
+
         restore_url = (
             self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
             or self._entry.options.get(CONF_DEFAULT_STREAM, "").strip() or None
         )
         snapshot = self._last_real_content_item if not restore_url else None
-        if restore_url:
+        if _was_standby:
+            _LOGGER.debug("SoundTouch: device was in standby, will return to standby after TTS")
+        elif restore_url:
             _LOGGER.debug("SoundTouch: will restore live stream URL: %s", restore_url)
         elif snapshot:
             _LOGGER.debug(
@@ -733,9 +739,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await self.coordinator.async_request_refresh()
 
         # Watch for TTS completion via WebSocket then restore previous source.
-        if restore_url or snapshot:
+        if _was_standby or restore_url or snapshot:
             self._restore_task = self.hass.async_create_task(
-                self._restore_after_tts(token, proxy, restore_url, snapshot, tts_url),
+                self._restore_after_tts(token, proxy, restore_url, snapshot, tts_url, _was_standby),
                 name="soundtouch_restore",
             )
 
@@ -746,6 +752,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         restore_url: str | None,
         snapshot: dict | None,
         tts_url: str = "",
+        was_standby: bool = False,
     ) -> None:
         """Wait for TTS to finish then restore the previous source.
 
@@ -829,7 +836,11 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             proxy.unregister(token)
             _LOGGER.debug("SoundTouch: sending restore /select at %.1fs", _time.monotonic() - _tts_start)
 
-            if restore_url:
+            if was_standby:
+                _LOGGER.debug("SoundTouch: returning to standby after TTS")
+                await self.coordinator.device.press_key("POWER")
+                await self.coordinator.async_request_refresh()
+            elif restore_url:
                 _LOGGER.debug("SoundTouch: restoring live stream directly: %s", restore_url)
                 # Force HTTP — SoundTouch rejects HTTPS stream URLs.
                 direct_url = restore_url
