@@ -560,7 +560,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         from .__init__ import STREAM_PROXY_KEY
         from .const import CONF_APP_KEY, DOMAIN
 
-        _LOGGER.debug("play_media called: type=%s id=%s", media_type, media_id)
+        _LOGGER.warning("play_media ENTER: type=%s id=%s", media_type, media_id)
 
         # Resolve media-source:// URIs (e.g. TTS) into a real HTTP URL
         if media_source.is_media_source_id(media_id):
@@ -617,7 +617,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         base = base.rstrip("/")
 
         # Detect live/infinite streams — they skip snapshot/restore and pre-fetch.
+        _LOGGER.warning("play_media: about to check is_live for %s", media_id)
         is_live = await _is_live_stream(media_id, base)
+        _LOGGER.warning("play_media: is_live=%s for %s", is_live, media_id)
 
         token = secrets.token_urlsafe(12)
 
@@ -675,6 +677,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await self.coordinator.async_request_refresh()
 
         # Estimate TTS duration and restore after playback.
+        _LOGGER.warning("play_media: before task creation, restore_url=%s snapshot=%s", restore_url, snapshot is not None)
         if restore_url or snapshot:
             self.hass.async_create_task(
                 self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot),
