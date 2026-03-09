@@ -61,6 +61,7 @@ class SoundTouchCoordinator(DataUpdateCoordinator):
                     return result.get(key)
                 return result
 
+            _LOGGER.warning("raw presets from device: %s", presets)
             return {
                 "info": _unwrap(info, "info"),
                 "now_playing": _unwrap(now_playing, "nowPlaying"),
