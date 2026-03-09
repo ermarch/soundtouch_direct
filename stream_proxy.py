@@ -47,6 +47,7 @@ class SoundTouchStreamProxy:
 
     def __init__(self) -> None:
         self._streams: dict[str, bytes | None] = {}  # None = placeholder (fetching)
+        self._direct: dict[str, str] = {}            # token -> live stream URL
 
     def register_placeholder(self, token: str) -> None:
         """Reserve a token slot before the audio is fetched.
@@ -55,6 +56,14 @@ class SoundTouchStreamProxy:
         The stream endpoint will block until register() fills in the bytes.
         """
         self._streams[token] = None
+
+    def register_direct(self, token: str, url: str) -> None:
+        """Register a live stream URL to be embedded directly in the station JSON."""
+        self._direct[token] = url
+
+    def get_direct(self, token: str) -> str | None:
+        """Return the direct URL for a live stream token, or None."""
+        return self._direct.get(token)
 
     async def register(self, token: str, source_url: str) -> bool:
         """Pre-fetch audio from source_url and store under token. Returns success."""
@@ -86,8 +95,8 @@ class SoundTouchStreamProxy:
             return False
 
     def has_token(self, token: str) -> bool:
-        """Return True if the token exists (even as a placeholder)."""
-        return token in self._streams
+        """Return True if the token exists (stream or direct)."""
+        return token in self._streams or token in self._direct
 
     def get(self, token: str) -> bytes | None:
         """Return audio bytes, or None if still fetching."""
@@ -95,6 +104,7 @@ class SoundTouchStreamProxy:
 
     def unregister(self, token: str) -> None:
         self._streams.pop(token, None)
+        self._direct.pop(token, None)
 
 
 class SoundTouchStationView(HomeAssistantView):
@@ -112,12 +122,18 @@ class SoundTouchStationView(HomeAssistantView):
         if not self._proxy.has_token(token):
             raise HTTPNotFound()
 
-        # Force HTTP — SoundTouch firmware rejects HTTPS stream URLs
-        base = self._ha_base_url
-        if base.startswith("https://"):
-            base = "http://" + base[8:]
+        # For live streams, embed the direct URL; for TTS use our proxy stream.
+        direct_url = self._proxy.get_direct(token)
+        if direct_url:
+            stream_url = direct_url
+            name = "Radio"
+        else:
+            base = self._ha_base_url
+            if base.startswith("https://"):
+                base = "http://" + base[8:]
+            stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
+            name = "TTS"
 
-        stream_url = f"{base}/api/soundtouch_direct/stream/{token}"
         descriptor = {
             "audio": {
                 "hasPlaylist": False,
@@ -125,7 +141,7 @@ class SoundTouchStationView(HomeAssistantView):
                 "streamUrl": stream_url,
             },
             "imageUrl": "",
-            "name": "TTS",
+            "name": name,
             "streamType": "liveRadio",
         }
         _LOGGER.warning(

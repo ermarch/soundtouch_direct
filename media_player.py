@@ -147,6 +147,34 @@ async def async_setup_entry(
     )
 
 
+async def _is_live_stream(url: str) -> bool:
+    """Return True if the URL is a live/infinite stream (e.g. internet radio).
+
+    We probe the headers with a short timeout. A live stream will have:
+    - No Content-Length header, OR
+    - An icy-* header (Icecast/Shoutcast), OR
+    - Content-Type of audio/* without a finite length
+
+    Falls back to False (treat as finite) if the probe fails.
+    """
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(connect=5, sock_read=3),
+            ) as resp:
+                if resp.headers.get("icy-name") or resp.headers.get("icy-genre"):
+                    return True
+                content_type = resp.headers.get("Content-Type", "")
+                content_length = resp.headers.get("Content-Length")
+                if content_type.startswith("audio/") and not content_length:
+                    return True
+                return False
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
 class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlayerEntity):
     """Representation of a Bose SoundTouch device as a media player."""
 
@@ -561,11 +589,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             _LOGGER.error("SoundTouch stream proxy not initialised and no app_key set")
             return
 
-        token = secrets.token_urlsafe(12)
-
-        # Build the station JSON URL — LOCAL_INTERNET_RADIO requires a JSON
-        # descriptor that points to the actual audio stream URL.
-        # Force HTTP because SoundTouch firmware rejects HTTPS stream URLs.
+        # Build base URL — force HTTP, SoundTouch firmware rejects HTTPS stream URLs.
         try:
             base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
         except NoURLAvailableError:
@@ -574,24 +598,34 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             base = "http://" + base[8:]
         base = base.rstrip("/")
 
+        token = secrets.token_urlsafe(12)
+
+        # Detect live/infinite streams by probing headers.
+        # Live radio has no Content-Length and must be passed directly —
+        # we cannot pre-fetch an infinite stream.
+        is_live = await _is_live_stream(media_id)
+
+        if is_live:
+            # Pass the URL directly in the JSON descriptor (downgrade to HTTP).
+            direct_url = media_id
+            if direct_url.startswith("https://"):
+                direct_url = "http://" + direct_url[8:]
+            proxy.register_direct(token, direct_url)
+            _LOGGER.warning("SoundTouch: live stream, passing URL directly: %s", direct_url)
+        else:
+            # Pre-fetch finite audio (TTS) concurrently with sending /select
+            # so the device gets the audio immediately when it connects (~2s later).
+            proxy.register_placeholder(token)
+
+            async def _prefetch() -> None:
+                success = await proxy.register(token, media_id)
+                if not success:
+                    _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
+                    proxy.unregister(token)
+
+            asyncio.ensure_future(_prefetch())
+
         station_url = f"{base}/api/soundtouch_direct/station/{token}.json"
-
-        # Register a placeholder so the station JSON endpoint returns 200
-        # immediately (the stream endpoint will block until audio is ready).
-        # Then kick off the pre-fetch concurrently with the /select command
-        # so we don't add the download time as upfront latency — the device
-        # takes 2-3 seconds to fetch the JSON and connect to the stream,
-        # which is our window to fetch the audio in the background.
-        proxy.register_placeholder(token)
-
-        async def _prefetch() -> None:
-            success = await proxy.register(token, media_id)
-            if not success:
-                _LOGGER.error("SoundTouch: failed to pre-fetch audio from %s", media_id)
-                proxy.unregister(token)
-
-        asyncio.ensure_future(_prefetch())
-
         _LOGGER.warning(
             "SoundTouch: LOCAL_INTERNET_RADIO station URL: %s (source: %s)",
             station_url, media_id,
