@@ -672,6 +672,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # TTS: snapshot current state, play directly, then restore.
         # Use _last_real_media_url if available (live stream we played via play_media),
         # otherwise fall back to _last_real_content_item (preset, Spotify, etc).
+        _LOGGER.warning("SoundTouch: restore lookup key=last_url_%s domain_keys=%s",
+            self._attr_unique_id,
+            list(self.hass.data.get(DOMAIN, {}).keys()))
         restore_url = self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
         snapshot = self._last_real_content_item if not restore_url else None
         if restore_url:
