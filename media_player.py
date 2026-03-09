@@ -784,7 +784,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                                             break
                                 duration = len(data) / (bitrate * 125)
                                 # Add 2s for device fetch+buffer startup latency, 0.5s end buffer.
-                                early_wait = duration + 2.5
+                                early_wait = duration + 1.8
                                 _LOGGER.warning("SoundTouch: TTS %.1fs @ %dkbps, restore in %.1fs", duration, bitrate, early_wait)
                 except Exception as err:
                     _LOGGER.warning("SoundTouch: TTS size probe failed: %r, using WS only", err)
