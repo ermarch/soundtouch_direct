@@ -645,7 +645,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}"))
         if not any(parsed_media.path.startswith(p) for p in HA_LOCAL_PATHS):
             self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = media_id
-            _LOGGER.debug("play_media: stored last_url=%s", media_id)
+            _media_title = kwargs.get("media_title") or kwargs.get("title") or ""
+            if _media_title:
+                self.hass.data.setdefault(DOMAIN, {})[f"last_title_{self._attr_unique_id}"] = _media_title
+            _LOGGER.debug("play_media: stored last_url=%s title=%s", media_id, _media_title)
             # Persist to config entry so it survives HA restarts.
             self.hass.config_entries.async_update_entry(
                 self._entry, options={**self._entry.options, "last_url": media_id}
@@ -896,7 +899,13 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 }
             else:
                 now_playing = self.coordinator.data.get("now_playing") or {}
-                station_name = now_playing.get("stationName") or "Radio"
+                station_name = (
+                    now_playing.get("stationName")
+                    or self.hass.data.get(DOMAIN, {}).get(f"last_title_{self._attr_unique_id}")
+                    or (content_item.get("itemName") if isinstance(content_item, dict) else None)
+                    or now_playing.get("ContentItem", {}).get("itemName")
+                    or "Radio"
+                )
                 content_item = {
                     "@source": "LOCAL_INTERNET_RADIO",
                     "@location": station_json_url,
