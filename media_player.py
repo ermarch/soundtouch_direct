@@ -753,6 +753,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 now = self.coordinator.data or {}
                 np = now.get("now_playing", {})
                 source = np.get("@source", "")
+                _LOGGER.warning("SoundTouch: WS update source=%r playing=%s", source, playing_event.is_set())
                 if source == "LOCAL_INTERNET_RADIO" and not playing_event.is_set():
                     playback_started_at.append(_time.monotonic())
                     _LOGGER.warning("SoundTouch: TTS playback started at %.1fs", _time.monotonic() - _tts_start)
