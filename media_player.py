@@ -673,8 +673,9 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
 
         # Estimate TTS duration and restore after playback.
         if restore_url or snapshot:
-            asyncio.ensure_future(
-                self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot)
+            self.hass.async_create_task(
+                self._restore_after_tts(tts_url, token, proxy, restore_url, snapshot),
+                name="soundtouch_restore",
             )
 
     async def _restore_after_tts(
@@ -693,33 +694,32 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
           - restore_url set: re-invoke play_media with the original live stream URL
           - snapshot set: use restore_content_item to replay the ContentItem directly
         """
+        _LOGGER.warning("SoundTouch: _restore_after_tts started, restore_url=%s", restore_url)
         import aiohttp
-        wait = 12.0  # safe fallback
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    tts_url, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        duration = len(data) / (128 * 125)
-                        wait = duration + 3.0
-                        _LOGGER.warning(
-                            "SoundTouch: TTS %.1fs, restoring in %.1fs", duration, wait,
-                        )
-        except Exception as err:
-            _LOGGER.warning("SoundTouch: could not fetch TTS for duration estimate: %r", err)
+            wait = 12.0  # safe fallback
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        tts_url, timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            duration = len(data) / (128 * 125)
+                            wait = duration + 3.0
+                            _LOGGER.warning(
+                                "SoundTouch: TTS %.1fs, restoring in %.1fs", duration, wait,
+                            )
+            except Exception as err:
+                _LOGGER.warning("SoundTouch: duration estimate failed: %r, using %.1fs", err, wait)
 
-        await asyncio.sleep(wait)
-        proxy.unregister(token)
+            _LOGGER.warning("SoundTouch: sleeping %.1fs before restore", wait)
+            await asyncio.sleep(wait)
+            proxy.unregister(token)
 
-        try:
             if restore_url:
                 _LOGGER.warning("SoundTouch: restoring live stream: %s", restore_url)
-                await self.async_play_media(
-                    media_type="music",
-                    media_id=restore_url,
-                )
+                await self.async_play_media(media_type="music", media_id=restore_url)
             elif snapshot:
                 _LOGGER.warning(
                     "SoundTouch: restoring ContentItem source=%s location=%s",
@@ -727,8 +727,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 )
                 await self.coordinator.device.restore_content_item(snapshot)
                 await self.coordinator.async_request_refresh()
+
+            _LOGGER.warning("SoundTouch: restore complete")
         except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("SoundTouch: failed to restore previous source: %r", err)
+            _LOGGER.error("SoundTouch: _restore_after_tts crashed: %r", err)
 
     # -------------------------------------------------------------------------
     # Custom services
