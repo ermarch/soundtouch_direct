@@ -15,7 +15,7 @@ from .stream_proxy import async_setup_stream_proxy
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
+PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER, Platform.NUMBER, Platform.BUTTON]
 
 # Key under hass.data[DOMAIN] for the shared stream proxy
 STREAM_PROXY_KEY = "stream_proxy"

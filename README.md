@@ -22,12 +22,14 @@ A full-featured Home Assistant custom integration for **Bose SoundTouch** speake
 | 🔊 **Multi-room zones** | Create, expand, and dissolve speaker groups |
 | 🎚️ **Bass control** | Adjust bass level per speaker (-9 to +9) |
 | 👍 **Track feedback** | Thumbs up/down (Pandora), add/remove favourites |
-| 🗣️ **TTS support** | Works as a target in the HA Media browser and `tts.speak` service |
+| 🗣️ **TTS support** | Works as a target in the HA Media browser and `tts.speak` service — previous source restores automatically after TTS finishes |
 | 🔍 **Auto-discovery** | Finds devices automatically via Zeroconf/mDNS |
 | 🔄 **Reconfigure** | Update IP address without losing entity history |
 | 📋 **Device registry** | Shows firmware version, model, and manufacturer |
 
 ---
+
+> ⚠️ **Bose cloud notice:** Bose is shutting down their cloud services in May 2026. This integration is designed to work entirely locally and is not affected.
 
 ## Requirements
 
@@ -78,6 +80,8 @@ The integration registers as a full media browser target, so your SoundTouch spe
 - The **Media** panel TTS target picker
 - The `tts.speak` service entity dropdown
 - Any automation action targeting a media player
+
+TTS is played via an internal stream proxy using the `LOCAL_INTERNET_RADIO` source, which works entirely locally without requiring Bose cloud services. After TTS finishes, the integration automatically restores the previously playing source (live radio, preset, etc.).
 
 Example automation using TTS:
 
@@ -290,6 +294,7 @@ The integration communicates entirely on your local network:
 |---|---|---|
 | HTTP REST | 8090 | All API commands (play, volume, source, etc.) |
 | WebSocket | 8080 | Real-time push notifications from the device |
+| HA HTTP | 8123 | Internal stream proxy for TTS and live radio (served via `LOCAL_INTERNET_RADIO`) |
 
 On startup, HA connects to the WebSocket and listens for notifications from the speaker (now playing changed, volume changed, etc.). When a notification arrives the coordinator immediately refreshes state — no polling required. If the WebSocket drops, the listener reconnects automatically with exponential backoff, and polling kicks in as a fallback in the meantime.
 

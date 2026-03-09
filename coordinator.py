@@ -42,12 +42,13 @@ class SoundTouchCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
-            info, now_playing, volume, presets, sources = await asyncio.gather(
+            info, now_playing, volume, presets, sources, bass = await asyncio.gather(
                 self.device.get_info(),
                 self.device.get_now_playing(),
                 self.device.get_volume(),
                 self.device.get_presets(),
                 self.device.get_sources(),
+                self.device.get_bass(),
                 return_exceptions=True,
             )
 
@@ -66,6 +67,7 @@ class SoundTouchCoordinator(DataUpdateCoordinator):
                 "volume": _unwrap(volume, "volume"),
                 "presets": _unwrap(presets, "presets"),
                 "sources": _unwrap(sources, "sources"),
+                "bass": _unwrap(bass, "bass"),
             }
 
         except Exception as err:
