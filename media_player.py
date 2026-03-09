@@ -709,7 +709,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # Watch for TTS completion via WebSocket then restore previous source.
         if restore_url or snapshot:
             self._restore_task = self.hass.async_create_task(
-                self._restore_after_tts(token, proxy, restore_url, snapshot),
+                self._restore_after_tts(token, proxy, restore_url, snapshot, tts_url),
                 name="soundtouch_restore",
             )
 
@@ -719,20 +719,20 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         proxy: Any,
         restore_url: str | None,
         snapshot: dict | None,
+        tts_url: str = "",
     ) -> None:
-        """Wait for TTS to finish (via WS event) then restore the previous source.
+        """Wait for TTS to finish then restore the previous source.
 
-        Waits for the device to report STANDBY/INVALID_SOURCE after playing the
-        LOCAL_INTERNET_RADIO TTS station, with a 15s hard timeout as fallback.
+        Estimates TTS duration from MP3 size and fires restore 1s early.
+        WS STANDBY event is used as fallback if estimate is too short.
         Restore strategy:
-          - restore_url set: re-invoke play_media with the original live stream URL
+          - restore_url set: send /select directly with the original live stream URL
           - snapshot set: use restore_content_item to replay the ContentItem directly
         """
         _LOGGER.warning("SoundTouch: _restore_after_tts started, restore_url=%s", restore_url)
+        import aiohttp, time as _time
         try:
             done = asyncio.Event()
-
-            import time as _time
             _tts_start = _time.monotonic()
 
             def _on_update() -> None:
@@ -741,21 +741,38 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 np = now.get("now_playing", {})
                 source = np.get("@source", "")
                 if source in ("STANDBY", "INVALID_SOURCE", ""):
-                    _LOGGER.warning("SoundTouch: TTS ended (source=%r) after %.1fs, triggering restore",
-                        source, _time.monotonic() - _tts_start)
+                    _LOGGER.warning("SoundTouch: WS STANDBY after %.1fs", _time.monotonic() - _tts_start)
                     done.set()
 
-            # Register listener on the coordinator's update signal.
             remove_listener = self.coordinator.async_add_listener(_on_update)
+
+            # Estimate TTS duration from MP3 size, fire restore 1s before expected end.
+            # WS STANDBY event will also trigger restore if it fires first.
+            early_wait = None
+            if tts_url:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(tts_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                duration = len(data) / (128 * 125)
+                                early_wait = max(0.5, duration - 1.0)
+                                _LOGGER.warning("SoundTouch: TTS %.1fs, firing restore in %.1fs", duration, early_wait)
+                except Exception as err:
+                    _LOGGER.warning("SoundTouch: TTS size probe failed: %r, using WS only", err)
+
             try:
-                await asyncio.wait_for(done.wait(), timeout=15.0)
+                if early_wait is not None:
+                    # Race: whichever fires first — early timer or WS STANDBY
+                    await asyncio.wait_for(done.wait(), timeout=early_wait)
+                    _LOGGER.warning("SoundTouch: WS beat timer, restoring now")
+                else:
+                    await asyncio.wait_for(done.wait(), timeout=15.0)
             except asyncio.TimeoutError:
-                _LOGGER.warning("SoundTouch: TTS restore timeout after %.1fs", _time.monotonic() - _tts_start)
+                _LOGGER.warning("SoundTouch: timer elapsed at %.1fs, restoring early", _time.monotonic() - _tts_start)
             finally:
                 remove_listener()
 
-            # Small pause so the device settles before we send /select.
-            await asyncio.sleep(0.7)
             proxy.unregister(token)
             _LOGGER.warning("SoundTouch: sending restore /select at %.1fs", _time.monotonic() - _tts_start)
 
