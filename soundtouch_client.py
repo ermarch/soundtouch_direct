@@ -289,14 +289,57 @@ class SoundTouchDevice:
         account_attr = f' sourceAccount="{account}"' if account else ""
         location_attr = f' location="{location}"' if location else ""
         type_attr = f' type="{media_type}"' if media_type else ""
-        # Use /storePreset endpoint with <preset> wrapper (no outer <presets> tag).
-        body = (
-            f'<preset id="{preset_id}">'
+        # Fetch existing presets, merge our new one, write all back via /storePreset.
+        existing = await self.get_presets() or {}
+        preset_list = existing.get("presets", {})
+        if preset_list is None:
+            preset_list = {}
+        presets = preset_list.get("preset", [])
+        if isinstance(presets, dict):
+            presets = [presets]
+
+        # Build a dict of existing presets keyed by id, then overwrite our slot.
+        preset_map = {}
+        for p in presets:
+            pid = str(p.get("@id", ""))
+            if pid:
+                preset_map[pid] = p
+
+        # Build the new ContentItem XML for our slot.
+        new_ci = (
             f'<ContentItem source="{source}"{location_attr}{account_attr}{type_attr} isPresetable="true">'
             f"<itemName>{item_name}</itemName>"
             f"</ContentItem>"
-            f"</preset>"
         )
+        preset_map[str(preset_id)] = {"@id": str(preset_id), "_ci_xml": new_ci}
+
+        # Reconstruct full presets XML.
+        parts = []
+        for pid in sorted(preset_map.keys(), key=int):
+            p = preset_map[pid]
+            if "_ci_xml" in p:
+                parts.append(f'<preset id="{pid}">{p["_ci_xml"]}</preset>')
+            else:
+                ci = p.get("ContentItem", {})
+                if not ci:
+                    continue
+                ci_src = ci.get("@source", "")
+                ci_loc = ci.get("@location", "")
+                ci_acc = ci.get("@sourceAccount", "")
+                ci_type = ci.get("@type", "")
+                ci_name = ci.get("itemName", "")
+                ci_loc_attr = f' location="{ci_loc}"' if ci_loc else ""
+                ci_acc_attr = f' sourceAccount="{ci_acc}"' if ci_acc else ""
+                ci_type_attr = f' type="{ci_type}"' if ci_type else ""
+                parts.append(
+                    f'<preset id="{pid}">'
+                    f'<ContentItem source="{ci_src}"{ci_loc_attr}{ci_acc_attr}{ci_type_attr} isPresetable="true">'
+                    f"<itemName>{ci_name}</itemName>"
+                    f"</ContentItem>"
+                    f"</preset>"
+                )
+
+        body = "".join(parts)
         await self._post("/storePreset", body)
 
     # -------------------------------------------------------------------------
