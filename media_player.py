@@ -613,20 +613,31 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             await self.coordinator.async_request_refresh()
             return
 
-        # --- TTS / finite audio: snapshot → play → restore ---
+        # TTS: snapshot current state, play, then restore
 
-        # Snapshot current state before interrupting
+        # Fetch fresh now_playing directly from device to avoid stale cache.
         snapshot = None
-        now_playing = self._now_playing
+        try:
+            fresh = await self.coordinator.device.get_now_playing()
+            now_playing = (fresh or {}).get("nowPlaying") or {}
+        except Exception:
+            now_playing = self._now_playing
+        _LOGGER.warning("SoundTouch: now_playing for snapshot: %s", now_playing)
+
         source = now_playing.get("@source", "")
-        if source and source not in ("STANDBY", "INVALID_SOURCE", ""):
+        if source and source not in ("STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", ""):
             content_item = now_playing.get("ContentItem")
+            _LOGGER.warning("SoundTouch: ContentItem for snapshot: %s", content_item)
             if isinstance(content_item, dict) and content_item.get("@source"):
                 snapshot = content_item
                 _LOGGER.warning(
-                    "SoundTouch: snapshot source=%s location=%s",
+                    "SoundTouch: snapshot captured source=%s location=%s",
                     snapshot.get("@source"), snapshot.get("@location"),
                 )
+            else:
+                _LOGGER.warning("SoundTouch: no restorable ContentItem, skipping restore")
+        else:
+            _LOGGER.warning("SoundTouch: source=%r not restorable, skipping snapshot", source)
 
         # Pre-fetch audio concurrently with /select
         proxy.register_placeholder(token)
