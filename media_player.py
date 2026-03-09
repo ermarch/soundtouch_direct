@@ -865,8 +865,22 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         content_item = now_playing.get("ContentItem")
         if not isinstance(content_item, dict):
             raise ValueError("No content item in now_playing — nothing to save as preset")
-        if content_item.get("@isPresetable") == "false":
+
+        # LOCAL_INTERNET_RADIO is our proxy — save the original stream URL instead.
+        if content_item.get("@source") == "LOCAL_INTERNET_RADIO":
+            real_url = self.hass.data.get(DOMAIN, {}).get(f"last_url_{self._attr_unique_id}")
+            if not real_url:
+                raise ValueError("Cannot determine original stream URL to save as preset")
+            content_item = {
+                "@source": "INTERNET_RADIO",
+                "@location": real_url,
+                "@type": "stationurl",
+                "@isPresetable": "true",
+                "itemName": real_url.split("/")[2],  # use hostname as name
+            }
+        elif content_item.get("@isPresetable") == "false":
             raise ValueError(f"Current source ({content_item.get('@source')}) cannot be saved as a preset")
+
         await self.coordinator.device.save_preset(preset_id, content_item)
         await self.coordinator.async_request_refresh()
 
