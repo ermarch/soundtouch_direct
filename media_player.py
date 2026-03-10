@@ -592,7 +592,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         # Resolve relative paths to absolute internal URLs
         if media_id.startswith("/"):
             try:
-                base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+                base = get_url(self.hass, allow_internal=True, allow_ip=False, prefer_external=False)
             except NoURLAvailableError:
                 try:
                     base = get_url(self.hass, allow_external=True)
@@ -629,7 +629,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
 
         # Build base URL — force HTTP, SoundTouch firmware rejects HTTPS stream URLs.
         try:
-            base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+            base = get_url(self.hass, allow_internal=True, allow_ip=False, prefer_external=False)
         except NoURLAvailableError:
             base = get_url(self.hass, allow_external=True)
         if base.startswith("https://"):
@@ -855,7 +855,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 if not _base:
                     from homeassistant.helpers.network import get_url, NoURLAvailableError
                     try:
-                        _base = get_url(self.hass, allow_internal=True, allow_ip=True, prefer_external=False)
+                        _base = get_url(self.hass, allow_internal=True, allow_ip=False, prefer_external=False)
                     except NoURLAvailableError:
                         _base = get_url(self.hass, allow_external=True)
                     if _base.startswith("https://"):

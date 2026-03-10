@@ -22,19 +22,32 @@ STREAM_PROXY_KEY = "stream_proxy"
 
 
 def _get_ha_base_url(hass: HomeAssistant) -> str:
-    """Return the HA base URL, preferring an internal IP-based HTTP URL.
+    """Return the HA base URL suitable for SoundTouch stream proxy URLs.
 
-    The SoundTouch firmware rejects HTTPS stream URLs, so we specifically
-    request an internal IP URL and strip any https scheme as a fallback.
+    Prefers the user-configured internal URL (which may use a hostname like
+    homeassistant.local) over a raw IP, so URLs survive network/IP changes.
+    Falls back to IP-based URL if no internal URL is configured.
+    The SoundTouch firmware rejects HTTPS, so we always force HTTP.
     """
+    url = None
+    # First try: use configured internal URL (respects user's hostname setting).
     try:
-        url = get_url(hass, allow_internal=True, allow_ip=True, prefer_external=False)
+        url = get_url(hass, allow_internal=True, allow_ip=False, prefer_external=False)
     except NoURLAvailableError:
+        pass
+    # Second try: allow IP-based internal URL.
+    if not url:
+        try:
+            url = get_url(hass, allow_internal=True, allow_ip=True, prefer_external=False)
+        except NoURLAvailableError:
+            pass
+    # Last resort: construct from HA config.
+    if not url:
         try:
             url = get_url(hass, allow_external=True)
         except NoURLAvailableError:
             url = f"http://{hass.config.api.local_ip}:{hass.config.api.port}"  # type: ignore[union-attr]
-    # Force HTTP — SoundTouch firmware cannot fetch HTTPS streams
+    # Force HTTP — SoundTouch firmware cannot fetch HTTPS streams.
     if url.startswith("https://"):
         url = "http://" + url[8:]
     return url.rstrip("/")
