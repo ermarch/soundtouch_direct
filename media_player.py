@@ -784,18 +784,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                     _chime_path = _chime_f.name
                 with _tf.NamedTemporaryFile(suffix='.mp3', delete=False) as _out_f:
                     _out_path = _out_f.name
-                _r = await asyncio.get_event_loop().run_in_executor(None, lambda: _sp.run(
-                    ['ffmpeg', '-y',
-                     '-i', _chime_path, '-i', _tts_path,
-                     '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1[out]',
-                     '-map', '[out]',
-                     '-codec:a', 'libmp3lame', '-b:a', '128k', '-ar', '44100', '-ac', '1',
-                     _out_path],
-                    capture_output=True,
-                ))
-                if _r.returncode == 0:
+                def _run_ffmpeg():
+                    _sp.run(
+                        ['ffmpeg', '-y',
+                         '-i', _chime_path, '-i', _tts_path,
+                         '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1[out]',
+                         '-map', '[out]',
+                         '-codec:a', 'libmp3lame', '-b:a', '128k', '-ar', '44100', '-ac', '1',
+                         _out_path],
+                        capture_output=True,
+                    )
                     with open(_out_path, 'rb') as _f:
-                        _combined = _f.read()
+                        return _f.read()
+                _combined = await asyncio.get_event_loop().run_in_executor(None, _run_ffmpeg)
             except Exception as _e:
                 _LOGGER.debug("SoundTouch: chime concat failed: %r", _e)
             finally:
@@ -863,7 +864,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 np = now.get("now_playing", {})
                 source = np.get("@source", "")
                 if source in ("STANDBY", "INVALID_SOURCE", ""):
-                    _LOGGER.warning("SoundTouch: WS STANDBY at %.1fs", _time.monotonic() - _tts_start)
+                    _LOGGER.debug("SoundTouch: WS STANDBY at %.1fs", _time.monotonic() - _tts_start)
                     done.set()
 
             # WS source-change used as early-finish signal.
@@ -910,7 +911,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                     try:
                         await asyncio.wait_for(connected_event.wait(), timeout=10.0)
                         elapsed = _time.monotonic() - _select_time
-                        _LOGGER.warning("SoundTouch: stream connected %.2fs after /select", elapsed)
+                        _LOGGER.debug("SoundTouch: stream connected %.2fs after /select", elapsed)
                     except asyncio.TimeoutError:
                         _LOGGER.debug("SoundTouch: stream connect timed out, proceeding anyway")
 
@@ -925,7 +926,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                         end_buffer = 1.8
                     elapsed_so_far = _time.monotonic() - _select_time
                     remaining = max(duration - elapsed_so_far + end_buffer, end_buffer)
-                    _LOGGER.warning("SoundTouch: TTS %.1fs elapsed %.1fs, restore in %.1fs",
+                    _LOGGER.debug("SoundTouch: TTS %.1fs elapsed %.1fs, restore in %.1fs",
                         duration, elapsed_so_far, remaining)
                     try:
                         await asyncio.wait_for(done.wait(), timeout=remaining)
@@ -940,7 +941,7 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
                 remove_listener()
 
             proxy.unregister(token)
-            _LOGGER.warning("SoundTouch: sending restore /select at %.1fs total, duration was %.1fs", _time.monotonic() - _select_time, duration or 0)
+            _LOGGER.debug("SoundTouch: sending restore /select at %.1fs total, duration was %.1fs", _time.monotonic() - _select_time, duration or 0)
 
             if was_standby:
                 _LOGGER.debug("SoundTouch: returning to standby after TTS")
