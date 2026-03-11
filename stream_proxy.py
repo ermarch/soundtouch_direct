@@ -48,6 +48,7 @@ class SoundTouchStreamProxy:
     def __init__(self) -> None:
         self._streams: dict[str, bytes | None] = {}  # None = placeholder (fetching)
         self._direct: dict[str, str] = {}            # token -> live stream URL
+        self._connected: dict[str, asyncio.Event] = {}  # token -> event set when device connects
 
     def register_placeholder(self, token: str) -> None:
         """Reserve a token slot before the audio is fetched.
@@ -56,6 +57,10 @@ class SoundTouchStreamProxy:
         The stream endpoint will block until register() fills in the bytes.
         """
         self._streams[token] = None
+
+    def get_connected_event(self, token: str) -> asyncio.Event | None:
+        """Return the event that fires when the device connects to this stream."""
+        return self._connected.get(token)
 
     def register_direct(self, token: str, url: str) -> None:
         """Register a live stream URL to be embedded directly in the station JSON."""
@@ -67,6 +72,7 @@ class SoundTouchStreamProxy:
 
     async def register(self, token: str, source_url: str) -> bool:
         """Pre-fetch audio from source_url and store under token. Returns success."""
+        self._connected[token] = asyncio.Event()
         _LOGGER.debug("SoundTouch proxy: pre-fetching %s", source_url)
         try:
             async with aiohttp.ClientSession() as session:
@@ -85,7 +91,7 @@ class SoundTouchStreamProxy:
                         _LOGGER.error("SoundTouch proxy: empty response from %s", source_url)
                         return False
                     self._streams[token] = data
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "SoundTouch proxy: stored %d bytes for token %s",
                         len(data), token,
                     )
@@ -105,6 +111,7 @@ class SoundTouchStreamProxy:
     def unregister(self, token: str) -> None:
         self._streams.pop(token, None)
         self._direct.pop(token, None)
+        self._connected.pop(token, None)
 
 
 class SoundTouchStationView(HomeAssistantView):
@@ -164,16 +171,15 @@ class SoundTouchStreamView(HomeAssistantView):
     def __init__(self, proxy: SoundTouchStreamProxy) -> None:
         self._proxy = proxy
 
-    async def get(self, request: web.Request, token: str) -> web.StreamResponse:
+    async def get(self, request: web.Request, token: str) -> web.Response:
         if not self._proxy.has_token(token):
             _LOGGER.warning("SoundTouch stream: unknown token %s", token)
             raise HTTPNotFound()
 
-        # If pre-fetch is still in progress, wait up to 10s for it to complete
+        # Wait up to 10s for pre-fetch to complete
         audio_bytes = self._proxy.get(token)
         if audio_bytes is None:
-            _LOGGER.debug("SoundTouch stream: waiting for pre-fetch token %s", token)
-            for _ in range(100):  # 100 × 0.1s = 10s max
+            for _ in range(100):
                 await asyncio.sleep(0.1)
                 audio_bytes = self._proxy.get(token)
                 if audio_bytes is not None:
@@ -182,47 +188,20 @@ class SoundTouchStreamView(HomeAssistantView):
                 _LOGGER.error("SoundTouch stream: pre-fetch timed out for token %s", token)
                 raise HTTPNotFound()
 
-        _LOGGER.warning(
-            "SoundTouch stream: connection received for token %s (%d bytes)",
-            token, len(audio_bytes),
-        )
+        _LOGGER.debug("SoundTouch stream: serving %d bytes for token %s", len(audio_bytes), token)
+        evt = self._proxy._connected.get(token)
+        if evt:
+            evt.set()
 
-        response = web.StreamResponse(
-            status=200,
+        self._proxy.unregister(token)
+        return web.Response(
+            body=audio_bytes,
             headers={
                 "Content-Type": "audio/mpeg",
+                "Content-Length": str(len(audio_bytes)),
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "icy-name": "TTS",
-                "icy-genre": "Speech",
-                "icy-metaint": "0",
             },
         )
-        await response.prepare(request)
-
-        try:
-            # Send the real audio
-            for i in range(0, len(audio_bytes), CHUNK_SIZE):
-                await response.write(audio_bytes[i:i + CHUNK_SIZE])
-                await asyncio.sleep(0)
-
-            _LOGGER.debug("SoundTouch stream: audio sent for token %s, holding open", token)
-
-            # Hold connection open with silence so the device finishes playing.
-            # It will disconnect naturally when done; we give up after 10 minutes.
-            for _ in range(1200):  # 1200 × 0.5s = 600s = 10 minutes
-                await asyncio.sleep(0.5)
-                await response.write(_SILENT_FRAME)
-
-        except (asyncio.CancelledError, ConnectionResetError):
-            _LOGGER.debug("SoundTouch stream: device disconnected for token %s", token)
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("SoundTouch stream: error for token %s: %r", token, err)
-        finally:
-            self._proxy.unregister(token)
-            _LOGGER.debug("SoundTouch stream: closed for token %s", token)
-
-        return response
 
 
 def async_setup_stream_proxy(

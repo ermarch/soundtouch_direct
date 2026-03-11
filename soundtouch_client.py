@@ -262,12 +262,15 @@ class SoundTouchDevice:
         item_name = content_item.get("itemName", "")
         media_type = content_item.get("@type", "")
 
+        # PRODUCT sources (TV, HDMI etc.) don't have a media_type.
+        # Avoid sending "stationurl" as a fallback for physical inputs.
+        effective_type = media_type if media_type else ("stationurl" if source != "PRODUCT" else "")
         await self.select_source(
             source=source,
             source_account=source_account,
             location=location,
             item_name=item_name,
-            media_type=media_type or "stationurl",
+            media_type=effective_type,
         )
 
     async def play_preset(self, preset_id: int) -> None:

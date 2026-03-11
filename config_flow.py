@@ -104,11 +104,10 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, discovery_info: zeroconf.ZeroconfServiceInfo
     ) -> FlowResult:
         """Handle zeroconf discovery."""
-        # Prefer the mDNS hostname over raw IP — survives DHCP reassignment.
-        # ZeroconfServiceInfo.hostname is e.g. "Bose-SoundTouch-300-9884E39F6A5F.local."
-        # Strip trailing dot if present.
-        mdns_host = (discovery_info.hostname or "").rstrip(".")
-        host = mdns_host if mdns_host.endswith(".local") else discovery_info.host
+        # Always store the raw IP — it's what aiohttp can reliably connect to.
+        # mDNS .local hostnames are resolved by HA's Zeroconf layer for discovery
+        # but may not resolve in plain aiohttp HTTP calls on all systems.
+        host = discovery_info.host
         port = discovery_info.port or DEFAULT_PORT
 
         self._discovery_info = {CONF_HOST: host, CONF_PORT: port}
@@ -116,13 +115,7 @@ class SoundTouchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             info = await validate_input(self.hass, self._discovery_info)
         except (CannotConnect, Exception):
-            # mDNS resolution failed — fall back to IP
-            host = discovery_info.host
-            self._discovery_info = {CONF_HOST: host, CONF_PORT: port}
-            try:
-                info = await validate_input(self.hass, self._discovery_info)
-            except (CannotConnect, Exception):
-                return self.async_abort(reason="cannot_connect")
+            return self.async_abort(reason="cannot_connect")
 
         device_id = info.get("device_id")
         if device_id:
