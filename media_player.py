@@ -229,6 +229,10 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         if stored_url:
             self.hass.data.setdefault(DOMAIN, {})[f"last_url_{self._attr_unique_id}"] = stored_url
             _LOGGER.debug("SoundTouch: loaded last_url from config entry: %s", stored_url)
+        stored_ci = self._entry.options.get("last_content_item")
+        if stored_ci and isinstance(stored_ci, dict):
+            self._last_real_content_item = stored_ci
+            _LOGGER.debug("SoundTouch: loaded last_content_item from config entry: %s", stored_ci)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -270,12 +274,19 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
             content_item = now_playing.get("ContentItem")
             if isinstance(content_item, dict) and content_item.get("@source"):
                 self._last_real_content_item = content_item
+                # Persist so it survives HA restarts (needed for standby TTS restore).
+                self.hass.config_entries.async_update_entry(
+                    self._entry,
+                    options={**self._entry.options, "last_content_item": content_item},
+                )
             # Cancel any pending restore if the user manually changed source
             if self._restore_task and not self._restore_task.done():
                 _LOGGER.debug("SoundTouch: manual source change, cancelling pending restore")
                 self._restore_task.cancel()
                 self._restore_task = None
         self.async_write_ha_state()
+
+
 
 
     @property
@@ -395,23 +406,45 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
 
     @property
     def source(self) -> str | None:
-        """Return the current source."""
-        return self._now_playing.get("@source")
+        """Return the current source as a friendly name matching source_list."""
+        raw = self._now_playing.get("@source")
+        if not raw:
+            return None
+        item = self._source_name_to_item(raw)
+        if item:
+            return item.get("#text") or raw
+        return raw
 
     @property
-    def source_list(self) -> list[str] | None:
-        """Return a list of available input sources."""
+    def source_list(self) -> list[str]:
+        """Return a list of available input sources with friendly names."""
+        sources_data = self._sources_data
+        source_items = sources_data.get("sourceItem")
+        if not source_items:
+            return []
+        if isinstance(source_items, dict):
+            source_items = [source_items]
+        _skip = {"STANDBY", "NOTIFICATION", "LOCAL_INTERNET_RADIO", "LOCAL"}
+        return [
+            s.get("#text") or s.get("@sourceAccount") or s.get("@source", "")
+            for s in source_items
+            if s.get("@status") == "READY" and s.get("@source") not in _skip
+        ]
+
+    def _source_name_to_item(self, source_name: str) -> dict | None:
+        """Find a sourceItem by its display name or raw source value."""
         sources_data = self._sources_data
         source_items = sources_data.get("sourceItem")
         if not source_items:
             return None
         if isinstance(source_items, dict):
             source_items = [source_items]
-        return [
-            s.get("@source", "")
-            for s in source_items
-            if s.get("@status") == "READY" and s.get("@source") != SOURCE_STANDBY
-        ]
+        for item in source_items:
+            if (item.get("#text") or item.get("@source", "")) == source_name:
+                return item
+            if item.get("@source") == source_name:
+                return item
+        return None
 
     @property
     def shuffle(self) -> bool | None:
@@ -528,25 +561,16 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
         await self.coordinator.async_request_refresh()
 
     async def async_select_source(self, source: str) -> None:
-        """Select an input source."""
-        # Find source details from the sources list
-        sources_data = self._sources_data
-        source_items = sources_data.get("sourceItem")
-        if source_items:
-            if isinstance(source_items, dict):
-                source_items = [source_items]
-            for item in source_items:
-                if item.get("@source") == source:
-                    await self.coordinator.device.select_source(
-                        source=source,
-                        source_account=item.get("@sourceAccount", ""),
-                        item_name=item.get("#text", source),
-                    )
-                    await self.coordinator.async_request_refresh()
-                    return
-
-        # Fallback
-        await self.coordinator.device.select_source(source=source)
+        """Select an input source by display name or raw source value."""
+        item = self._source_name_to_item(source)
+        if item:
+            await self.coordinator.device.select_source(
+                source=item.get("@source", source),
+                source_account=item.get("@sourceAccount", ""),
+                item_name=item.get("#text", source),
+            )
+        else:
+            await self.coordinator.device.select_source(source=source)
         await self.coordinator.async_request_refresh()
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
@@ -945,6 +969,20 @@ class SoundTouchMediaPlayer(CoordinatorEntity[SoundTouchCoordinator], MediaPlaye
 
             if was_standby:
                 _LOGGER.debug("SoundTouch: returning to standby after TTS")
+                # Restore the last real source and wait for WS to confirm the
+                # switch before powering off — ensures firmware saves it as last source.
+                _wake_snap = self._last_real_content_item
+                if _wake_snap and _wake_snap.get("@source") not in ("", "STANDBY", "INVALID_SOURCE", "LOCAL_INTERNET_RADIO", "LOCAL"):
+                    _target_source = _wake_snap.get("@source")
+                    _LOGGER.debug("SoundTouch: restoring %s before standby", _target_source)
+                    await self.coordinator.device.restore_content_item(_wake_snap)
+                    # Wait up to 5s for WS to confirm source switched
+                    for _ in range(50):
+                        await asyncio.sleep(0.1)
+                        _now_src = (self.coordinator.data.get("now_playing") or {}).get("@source", "")
+                        if _now_src == _target_source:
+                            _LOGGER.debug("SoundTouch: source confirmed %s, powering off", _now_src)
+                            break
                 await self.coordinator.device.press_key("POWER")
                 await self.coordinator.async_request_refresh()
             elif restore_url:
