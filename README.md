@@ -16,13 +16,15 @@ A full-featured Home Assistant custom integration for **Bose SoundTouch** speake
 | Feature | Details |
 |---|---|
 | 🎵 **Full media player** | Play, pause, stop, next/prev track, volume, mute |
-| 📻 **Source selection** | Bluetooth, AUX, Spotify, Pandora, Internet Radio, stored music |
+| 📻 **Source selection** | Switch between physical inputs (TV, HDMI) and network sources (Spotify, TuneIn, etc.) directly from HA |
 | 🔢 **Presets** | Trigger any of the 6 hardware presets from automations |
 | ⚡ **Real-time updates** | WebSocket push notifications — state changes appear instantly |
 | 🔊 **Multi-room zones** | Create, expand, and dissolve speaker groups |
 | 🎚️ **Bass control** | Adjust bass level per speaker (-9 to +9) |
 | 👍 **Track feedback** | Thumbs up/down (Pandora), add/remove favourites |
 | 🗣️ **TTS support** | Works as a target in the HA Media browser and `tts.speak` service — previous source restores automatically after TTS finishes |
+| 🔔 **TTS from active source** | When TTS interrupts an active source (e.g. TV), a soft chime precedes the announcement to absorb the firmware fade-in, then the original source is restored |
+| 💤 **TTS from standby** | When TTS wakes the device from standby, it plays the announcement then restores the last real source before returning to standby — so the next power-on resumes the correct input |
 | 🔍 **Auto-discovery** | Finds devices automatically via Zeroconf/mDNS |
 | 🔄 **Reconfigure** | Update IP address without losing entity history |
 | 📋 **Device registry** | Shows firmware version, model, and manufacturer |
@@ -81,7 +83,14 @@ The integration registers as a full media browser target, so your SoundTouch spe
 - The `tts.speak` service entity dropdown
 - Any automation action targeting a media player
 
-TTS is played via an internal stream proxy using the `LOCAL_INTERNET_RADIO` source, which works entirely locally without requiring Bose cloud services. After TTS finishes, the integration automatically restores the previously playing source (live radio, preset, etc.).
+TTS is played via an internal stream proxy using the `LOCAL_INTERNET_RADIO` source, which works entirely locally without requiring Bose cloud services.
+
+**Restore behaviour after TTS:**
+
+- **Active source (e.g. TV):** The SoundTouch firmware fades in audio when switching sources. To compensate, a soft chime is automatically prepended to the announcement — the fade-in silences the chime, and speech starts cleanly. After TTS finishes, the original source is restored.
+- **Standby:** The device is woken, the announcement plays, and the integration then restores the last known real source (persisted across HA restarts) before returning the device to standby. This ensures the next manual power-on resumes the correct input rather than the TTS WiFi source.
+
+> **Note for soundbars with HDMI-CEC:** When the TV powers on it will switch the soundbar to TV input via CEC regardless of the last saved source. The standby restore is most relevant when powering the soundbar on independently of the TV.
 
 Example automation using TTS:
 
@@ -181,6 +190,29 @@ Bookmark or remove the currently playing track.
 service: soundtouch_direct.add_favorite
 target:
   entity_id: media_player.living_room
+```
+
+---
+
+## Source Selection
+
+The integration exposes all `READY` sources from the device as a source list with friendly names (e.g. `TV`, `HDMI_1`, `ALEXA`, `TUNEIN`). The current source is also shown with its friendly name.
+
+The default HA media player card does not prominently expose the source selector. For the best experience, add a **media-control card** to your dashboard:
+
+```yaml
+type: media-control
+entity: media_player.your_soundtouch_entity
+```
+
+You can also switch source via a service call:
+
+```yaml
+service: media_player.select_source
+target:
+  entity_id: media_player.living_room
+data:
+  source: TV
 ```
 
 ---
